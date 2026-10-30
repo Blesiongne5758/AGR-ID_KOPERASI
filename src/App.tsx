@@ -1,221 +1,265 @@
 import { useState } from 'react';
-import { Database, Key, Webhook, Shield, Copy, Check, Link2, Hash, Code2 } from 'lucide-react';
+import {
+  Webhook,
+  Shield,
+  Database,
+  Lock,
+  Copy,
+  Check,
+  Zap,
+  AlertTriangle,
+  GitBranch,
+  RefreshCw,
+  CheckCircle2,
+} from 'lucide-react';
 
-interface Column {
-  name: string;
-  type: string;
-  constraints: string[];
-  description: string;
+const webhookCode = `const express = require('express');
+const crypto = require('crypto');
+const router = express.Router();
+const db = require('../config/database');
+
+/**
+ * POST /api/v1/webhooks/agrid
+ * Endpoint ini menerima notifikasi dari AGRID Marketplace
+ */
+router.post('/agrid', async (req, res) => {
+    try {
+        const signature = req.headers['x-agrid-signature'];
+        const payload = req.body;
+        const eventId = payload.event_id; // Idempotency key dari AGRID
+
+        // 1. VERIFIKASI KEAMANAN (HMAC SHA256)
+        // Ambil webhook_secret berdasarkan cooperative_id
+        const coopId = payload.cooperative_id;
+        const integration = await db.query(
+            'SELECT webhook_secret FROM agrid_integrations WHERE cooperative_id = $1 AND is_active = true', 
+            [coopId]
+        );
+
+        if (integration.rows.length === 0) {
+            return res.status(404).json({ error: 'Integrasi tidak aktif' });
+        }
+
+        const secret = integration.rows[0].webhook_secret;
+        const expectedSignature = crypto
+            .createHmac('sha256', secret)
+            .update(JSON.stringify(payload))
+            .digest('hex');
+
+        // Gunakan timingSafeEqual untuk mencegah Timing Attack
+        const signatureBuffer = Buffer.from(signature, 'hex');
+        const expectedBuffer = Buffer.from(expectedSignature, 'hex');
+        
+        if (signatureBuffer.length !== expectedBuffer.length || 
+            !crypto.timingSafeEqual(signatureBuffer, expectedBuffer)) {
+            return res.status(401).json({ error: 'Invalid signature' });
+        }
+
+        // 2. CEK IDEMPOTENCY (Mencegah proses ganda jika AGRID retry)
+        const existingLog = await db.query(
+            'SELECT id FROM agrid_webhook_logs WHERE agrid_event_id = $1', 
+            [eventId]
+        );
+        if (existingLog.rows.length > 0) {
+            return res.status(200).json({ message: 'Event already processed' });
+        }
+
+        // 3. SIMPAN LOG WEBHOOK (Status Pending)
+        await db.query(
+            \`INSERT INTO agrid_webhook_logs 
+             (id, agrid_event_id, cooperative_id, event_type, payload, signature, status) 
+             VALUES ($1, $2, $3, $4, $5, $6, 'PENDING')\`,
+            [crypto.randomUUID(), eventId, coopId, payload.event_type, 
+             JSON.stringify(payload), signature]
+        );
+
+        // 4. PROSES LOGIKA BISNIS
+        if (payload.event_type === 'ORDER.PAID') {
+            await processPaidOrder(payload);
+        } else if (payload.event_type === 'ORDER.CANCELLED') {
+            await processCancelledOrder(payload);
+        }
+
+        // 5. UPDATE STATUS LOG
+        await db.query(
+            "UPDATE agrid_webhook_logs SET status = 'SUCCESS', processed_at = NOW() WHERE agrid_event_id = $1", 
+            [eventId]
+        );
+
+        // WAJIB return 200 OK secepatnya ke AGRID
+        return res.status(200).json({ message: 'Webhook received and processed' });
+
+    } catch (error) {
+        console.error('Webhook Error:', error);
+        return res.status(500).json({ error: 'Internal Server Error' });
+    }
+});
+
+// Fungsi Helper: Memproses Pesanan yang Dibayar via Paylater Koperasi
+async function processPaidOrder(payload) {
+    const { member_id, cooperative_id, order_amount, agrid_order_id } = payload;
+
+    // Cari data keanggotaan dan limit Paylater di database lokal
+    const memberData = await db.query(
+        \`SELECT m.id as membership_id, l.id as loan_id, l.remaining_limit 
+         FROM memberships m 
+         LEFT JOIN loans l ON m.id = l.membership_id 
+           AND l.loan_type = 'PAYLATER' AND l.status = 'ACTIVE'
+         WHERE m.user_id = (SELECT id FROM users WHERE member_id = $1) 
+           AND m.cooperative_id = $2\`,
+        [member_id, cooperative_id]
+    );
+
+    if (memberData.rows.length === 0) throw new Error('Member not found');
+    
+    const loan = memberData.rows[0];
+    if (!loan.loan_id) throw new Error('Paylater loan not active');
+    if (loan.remaining_limit < order_amount) throw new Error('Insufficient limit');
+
+    // Kurangi Limit Paylater dan Catat di Ledger (Transaction!)
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        
+        await client.query(
+            'UPDATE loans SET remaining_limit = remaining_limit - $1 WHERE id = $2', 
+            [order_amount, loan.loan_id]
+        );
+        
+        await client.query(
+            \`INSERT INTO transactions 
+             (membership_id, loan_id, type, amount, reference_id, description) 
+             VALUES ($1, $2, 'PAYLATER_PURCHASE', $3, $4, 'Pembelian di AGRID Marketplace')\`,
+            [loan.membership_id, loan.loan_id, order_amount, agrid_order_id]
+        );
+
+        await client.query('COMMIT');
+    } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+    } finally {
+        client.release();
+    }
 }
 
-interface TableSchema {
-  id: string;
-  name: string;
-  description: string;
-  icon: string;
-  color: string;
-  gradient: string;
-  columns: Column[];
-}
+module.exports = router;`;
 
-const tables: TableSchema[] = [
-  {
-    id: 'agrid_integrations',
-    name: 'agrid_integrations',
-    description: 'Menyimpan kredensial API untuk setiap koperasi yang mengaktifkan integrasi AGRID',
-    icon: '🔐',
-    color: 'text-emerald-400',
-    gradient: 'from-emerald-500 to-teal-500',
-    columns: [
-      {
-        name: 'id',
-        type: 'UUID',
-        constraints: ['PRIMARY KEY', 'DEFAULT gen_random_uuid()'],
-        description: 'Primary key unik untuk setiap record integrasi',
-      },
-      {
-        name: 'cooperative_id',
-        type: 'UUID',
-        constraints: ['UNIQUE', 'NOT NULL', 'REFERENCES cooperatives(id)', 'ON DELETE CASCADE'],
-        description: 'ID koperasi (1 koperasi = 1 integrasi)',
-      },
-      {
-        name: 'agrid_client_id',
-        type: 'VARCHAR(100)',
-        constraints: ['NOT NULL'],
-        description: 'Client ID dari AGRID untuk autentikasi API',
-      },
-      {
-        name: 'agrid_client_secret',
-        type: 'VARCHAR(255)',
-        constraints: ['NOT NULL'],
-        description: 'Client secret dari AGRID (enkripsi di level aplikasi)',
-      },
-      {
-        name: 'webhook_secret',
-        type: 'VARCHAR(255)',
-        constraints: ['NOT NULL'],
-        description: 'Secret key untuk verifikasi HMAC signature webhook',
-      },
-      {
-        name: 'is_active',
-        type: 'BOOLEAN',
-        constraints: ['DEFAULT TRUE'],
-        description: 'Status aktif/nonaktif integrasi',
-      },
-      {
-        name: 'created_at',
-        type: 'TIMESTAMP',
-        constraints: ['DEFAULT CURRENT_TIMESTAMP'],
-        description: 'Timestamp kapan integrasi dibuat',
-      },
-    ],
-  },
-  {
-    id: 'agrid_webhook_logs',
-    name: 'agrid_webhook_logs',
-    description: 'Log webhook dari AGRID untuk debugging dan audit trail',
-    icon: '📡',
-    color: 'text-blue-400',
-    gradient: 'from-blue-500 to-cyan-500',
-    columns: [
-      {
-        name: 'id',
-        type: 'UUID',
-        constraints: ['PRIMARY KEY', 'DEFAULT gen_random_uuid()'],
-        description: 'Primary key unik untuk setiap log webhook',
-      },
-      {
-        name: 'agrid_event_id',
-        type: 'VARCHAR(100)',
-        constraints: ['UNIQUE', 'NOT NULL'],
-        description: 'Idempotency key dari AGRID (mencegah duplicate processing)',
-      },
-      {
-        name: 'cooperative_id',
-        type: 'UUID',
-        constraints: ['NOT NULL'],
-        description: 'ID koperasi yang menerima webhook',
-      },
-      {
-        name: 'event_type',
-        type: 'VARCHAR(50)',
-        constraints: ['NOT NULL'],
-        description: "Jenis event: 'ORDER.PAID', 'ORDER.CANCELLED', dll",
-      },
-      {
-        name: 'payload',
-        type: 'JSONB',
-        constraints: ['NOT NULL'],
-        description: 'Payload lengkap webhook dalam format JSON',
-      },
-      {
-        name: 'signature',
-        type: 'VARCHAR(255)',
-        constraints: ['NOT NULL'],
-        description: 'HMAC signature dari AGRID untuk verifikasi',
-      },
-      {
-        name: 'processed_at',
-        type: 'TIMESTAMP',
-        constraints: [],
-        description: 'Timestamp kapan webhook berhasil diproses',
-      },
-      {
-        name: 'status',
-        type: 'VARCHAR(20)',
-        constraints: ["DEFAULT 'PENDING'"],
-        description: "Status: 'PENDING', 'SUCCESS', 'FAILED'",
-      },
-      {
-        name: 'created_at',
-        type: 'TIMESTAMP',
-        constraints: ['DEFAULT CURRENT_TIMESTAMP'],
-        description: 'Timestamp kapan webhook diterima',
-      },
-    ],
-  },
-];
-
-const sqlScript = `-- Tabel 1: agrid_integrations
--- Menyimpan kredensial API untuk setiap koperasi yang mengaktifkan integrasi AGRID
-CREATE TABLE agrid_integrations (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    cooperative_id UUID UNIQUE NOT NULL REFERENCES cooperatives(id) ON DELETE CASCADE,
-    agrid_client_id VARCHAR(100) NOT NULL,
-    agrid_client_secret VARCHAR(255) NOT NULL, -- Enkripsi di level aplikasi
-    webhook_secret VARCHAR(255) NOT NULL,      -- Untuk verifikasi HMAC
-    is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Tabel 2: agrid_webhook_logs
--- Log Webhook (Sangat penting untuk debugging dan audit)
-CREATE TABLE agrid_webhook_logs (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    agrid_event_id VARCHAR(100) UNIQUE NOT NULL, -- Idempotency Key dari AGRID
-    cooperative_id UUID NOT NULL,
-    event_type VARCHAR(50) NOT NULL,             -- e.g., 'ORDER.PAID', 'ORDER.CANCELLED'
-    payload JSONB NOT NULL,
-    signature VARCHAR(255) NOT NULL,
-    processed_at TIMESTAMP,
-    status VARCHAR(20) DEFAULT 'PENDING',        -- 'PENDING', 'SUCCESS', 'FAILED'
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Indexes untuk performa
-CREATE INDEX idx_agrid_integrations_cooperative ON agrid_integrations(cooperative_id);
-CREATE INDEX idx_agrid_integrations_active ON agrid_integrations(is_active) WHERE is_active = TRUE;
-
-CREATE INDEX idx_agrid_webhook_logs_event_id ON agrid_webhook_logs(agrid_event_id);
-CREATE INDEX idx_agrid_webhook_logs_cooperative ON agrid_webhook_logs(cooperative_id);
-CREATE INDEX idx_agrid_webhook_logs_event_type ON agrid_webhook_logs(event_type);
-CREATE INDEX idx_agrid_webhook_logs_status ON agrid_webhook_logs(status);
-CREATE INDEX idx_agrid_webhook_logs_created ON agrid_webhook_logs(created_at DESC);
-CREATE INDEX idx_agrid_webhook_logs_payload ON agrid_webhook_logs USING GIN (payload);`;
-
-function getConstraintStyle(constraint: string): string {
-  if (constraint.includes('PRIMARY KEY')) return 'bg-amber-500/20 text-amber-400 border-amber-500/30';
-  if (constraint.includes('UNIQUE')) return 'bg-purple-500/20 text-purple-400 border-purple-500/30';
-  if (constraint.includes('NOT NULL')) return 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30';
-  if (constraint.includes('REFERENCES')) return 'bg-blue-500/20 text-blue-400 border-blue-500/30';
-  if (constraint.includes('DEFAULT')) return 'bg-slate-500/20 text-slate-400 border-slate-500/30';
-  return 'bg-white/5 text-slate-400 border-white/10';
-}
-
-function highlightSQL(code: string): string {
+function highlightJS(code: string): string {
   let highlighted = code
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
 
-  highlighted = highlighted.replace(/(--.*$)/gm, '<span class="text-slate-500 italic">$1</span>');
+  // Comments
+  highlighted = highlighted.replace(/(\/\*\*[\s\S]*?\*\/)/g, '<span class="text-slate-500 italic">$1</span>');
+  highlighted = highlighted.replace(/(\/\/.*$)/gm, '<span class="text-slate-500 italic">$1</span>');
+
+  // Template literals
+  highlighted = highlighted.replace(/(`[^`]*`)/g, '<span class="text-emerald-400">$1</span>');
+  // Strings
   highlighted = highlighted.replace(/('[^']*')/g, '<span class="text-emerald-400">$1</span>');
 
-  const keywords = ['CREATE', 'TABLE', 'UUID', 'PRIMARY', 'KEY', 'DEFAULT', 'NOT', 'NULL', 'UNIQUE', 'REFERENCES', 'ON', 'DELETE', 'CASCADE', 'BOOLEAN', 'VARCHAR', 'TIMESTAMP', 'JSONB', 'TRUE', 'FALSE', 'INDEX', 'WHERE', 'USING', 'GIN'];
+  // Keywords
+  const keywords = ['const', 'let', 'var', 'function', 'async', 'await', 'return', 'if', 'else', 'try', 'catch', 'throw', 'new', 'require', 'module', 'exports', 'finally'];
   keywords.forEach(kw => {
     const regex = new RegExp(`\\b(${kw})\\b`, 'g');
     highlighted = highlighted.replace(regex, '<span class="text-purple-400 font-semibold">$1</span>');
   });
 
-  highlighted = highlighted.replace(/\b(gen_random_uuid|CURRENT_TIMESTAMP)\b/g, '<span class="text-cyan-400">$1</span>');
+  // Numbers
   highlighted = highlighted.replace(/\b(\d+)\b/g, '<span class="text-amber-400">$1</span>');
 
   return highlighted;
 }
 
 export default function App() {
-  const [activeTable, setActiveTable] = useState<string | null>(null);
-  const [showSQL, setShowSQL] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [showCode, setShowCode] = useState(false);
+  const [activeStep, setActiveStep] = useState<number | null>(null);
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(sqlScript).catch(() => {});
+    navigator.clipboard.writeText(webhookCode).catch(() => {});
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const totalColumns = tables.reduce((sum, t) => sum + t.columns.length, 0);
+  const steps = [
+    {
+      num: 1,
+      title: 'Verifikasi Keamanan (HMAC SHA256)',
+      icon: Shield,
+      color: 'emerald',
+      desc: 'Ambil webhook_secret dari tabel agrid_integrations berdasarkan cooperative_id, lalu verifikasi signature dengan timingSafeEqual',
+      code: `const integration = await db.query(
+    'SELECT webhook_secret FROM agrid_integrations WHERE cooperative_id = $1 AND is_active = true', 
+    [coopId]
+);
+
+const secret = integration.rows[0].webhook_secret;
+const expectedSignature = crypto
+    .createHmac('sha256', secret)
+    .update(JSON.stringify(payload))
+    .digest('hex');
+
+// Timing-safe comparison
+if (!crypto.timingSafeEqual(signatureBuffer, expectedBuffer)) {
+    return res.status(401).json({ error: 'Invalid signature' });
+}`,
+    },
+    {
+      num: 2,
+      title: 'Cek Idempotency',
+      icon: RefreshCw,
+      color: 'blue',
+      desc: 'Cek apakah event_id sudah diproses. Return 200 OK agar AGRID tidak retry',
+      code: `const existingLog = await db.query(
+    'SELECT id FROM agrid_webhook_logs WHERE agrid_event_id = $1', 
+    [eventId]
+);
+if (existingLog.rows.length > 0) {
+    return res.status(200).json({ message: 'Event already processed' });
+}`,
+    },
+    {
+      num: 3,
+      title: 'Simpan Log Webhook (PENDING)',
+      icon: Database,
+      color: 'purple',
+      desc: 'Insert log ke agrid_webhook_logs dengan status PENDING sebelum proses bisnis',
+      code: `await db.query(
+    \`INSERT INTO agrid_webhook_logs 
+     (id, agrid_event_id, cooperative_id, event_type, payload, signature, status) 
+     VALUES ($1, $2, $3, $4, $5, $6, 'PENDING')\`,
+    [crypto.randomUUID(), eventId, coopId, payload.event_type, 
+     JSON.stringify(payload), signature]
+);`,
+    },
+    {
+      num: 4,
+      title: 'Proses Logika Bisnis',
+      icon: GitBranch,
+      color: 'amber',
+      desc: 'Routing berdasarkan event_type: ORDER.PAID atau ORDER.CANCELLED',
+      code: `if (payload.event_type === 'ORDER.PAID') {
+    await processPaidOrder(payload);
+} else if (payload.event_type === 'ORDER.CANCELLED') {
+    await processCancelledOrder(payload);
+}`,
+    },
+    {
+      num: 5,
+      title: 'Update Status & Return 200',
+      icon: CheckCircle2,
+      color: 'emerald',
+      desc: 'Update status log ke SUCCESS dan return 200 OK secepatnya ke AGRID',
+      code: `await db.query(
+    "UPDATE agrid_webhook_logs SET status = 'SUCCESS', processed_at = NOW() WHERE agrid_event_id = $1", 
+    [eventId]
+);
+
+return res.status(200).json({ message: 'Webhook received and processed' });`,
+    },
+  ];
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
@@ -225,202 +269,175 @@ export default function App() {
         {/* Header */}
         <div className="text-center mb-12">
           <div className="flex items-center justify-center gap-3 mb-6">
-            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500 to-blue-600 flex items-center justify-center shadow-2xl shadow-emerald-500/20">
-              <Database className="w-8 h-8 text-white" />
+            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-orange-500 to-amber-600 flex items-center justify-center shadow-2xl shadow-orange-500/20">
+              <Webhook className="w-8 h-8 text-white" />
             </div>
           </div>
           <h1 className="text-4xl sm:text-5xl font-bold text-white mb-4">
-            AGRID Integration Schema
+            AGRID Webhook - Production Ready
           </h1>
           <p className="text-xl text-slate-300 max-w-3xl mx-auto">
-            Database tables untuk integrasi AGRID Marketplace
+            POST /api/v1/webhooks/agrid
           </p>
+          <div className="mt-4 inline-flex items-center gap-2 px-4 py-2 bg-orange-500/10 border border-orange-500/20 rounded-lg">
+            <Lock className="w-4 h-4 text-orange-400" />
+            <span className="text-orange-400 text-sm font-mono">
+              Per-Cooperative Secrets + Idempotency + Transaction
+            </span>
+          </div>
         </div>
 
-        {/* Stats */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-12">
-          {[
-            { label: 'Tabel', value: tables.length.toString(), icon: Database },
-            { label: 'Total Kolom', value: totalColumns.toString(), icon: Hash },
-            { label: 'Indexes', value: '8', icon: Link2 },
-            { label: 'JSONB', value: '✓', icon: Code2 },
-          ].map((stat) => {
-            const Icon = stat.icon;
-            return (
-              <div key={stat.label} className="bg-white/5 border border-white/10 rounded-xl p-4 text-center">
-                <Icon className="w-6 h-6 text-emerald-400 mx-auto mb-2" />
-                <div className="text-2xl font-bold text-white">{stat.value}</div>
-                <div className="text-xs text-slate-400">{stat.label}</div>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Key Features */}
-        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-12">
-          {[
-            { icon: Key, title: 'API Credentials', desc: 'Client ID & Secret per koperasi', color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
-            { icon: Shield, title: 'HMAC Verification', desc: 'Webhook secret untuk signature', color: 'text-blue-400', bg: 'bg-blue-500/10' },
-            { icon: Webhook, title: 'Idempotency Key', desc: 'Mencegah duplicate processing', color: 'text-purple-400', bg: 'bg-purple-500/10' },
-            { icon: Database, title: 'JSONB Payload', desc: 'Flexible storage dengan GIN index', color: 'text-amber-400', bg: 'bg-amber-500/10' },
-          ].map((feature) => {
-            const Icon = feature.icon;
-            return (
-              <div key={feature.title} className="bg-white/5 border border-white/10 rounded-xl p-4 hover:bg-white/10 transition-all">
-                <div className={`w-10 h-10 rounded-lg ${feature.bg} flex items-center justify-center mb-3`}>
-                  <Icon className={`w-5 h-5 ${feature.color}`} />
+        {/* Key Differences */}
+        <div className="bg-gradient-to-r from-orange-500/5 to-amber-500/5 border border-orange-500/20 rounded-2xl p-6 mb-12">
+          <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-orange-400" />
+            Key Features (Production Grade)
+          </h3>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {[
+              { label: 'Per-Cooperative Secret', desc: 'webhook_secret dari DB per koperasi', icon: '🔐' },
+              { label: 'Idempotency via event_id', desc: 'Return 200 OK jika sudah diproses', icon: '🔄' },
+              { label: 'Log-First Pattern', desc: 'Insert PENDING sebelum proses bisnis', icon: '📝' },
+              { label: 'Transaction for Ledger', desc: 'BEGIN/COMMIT/ROLLBACK untuk update Paylater', icon: '💾' },
+              { label: 'Timing-Safe Comparison', desc: 'crypto.timingSafeEqual mencegah timing attack', icon: '🛡️' },
+              { label: 'Event-Based Routing', desc: 'ORDER.PAID dan ORDER.CANCELLED', icon: '🔀' },
+            ].map((item) => (
+              <div key={item.label} className="flex items-start gap-2 p-3 rounded-lg bg-white/5 border border-white/5">
+                <span className="text-lg">{item.icon}</span>
+                <div>
+                  <div className="text-xs font-semibold text-white">{item.label}</div>
+                  <div className="text-[10px] text-slate-500">{item.desc}</div>
                 </div>
-                <h4 className="text-sm font-semibold text-white mb-1">{feature.title}</h4>
-                <p className="text-xs text-slate-400">{feature.desc}</p>
               </div>
-            );
-          })}
-        </div>
-
-        {/* Tables Overview */}
-        <div className="mb-12">
-          <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-2">
-            <Database className="w-6 h-6 text-emerald-400" />
-            2 Tabel Utama
-          </h2>
-
-          <div className="grid md:grid-cols-2 gap-6">
-            {tables.map((table) => (
-              <button
-                key={table.id}
-                onClick={() => setActiveTable(activeTable === table.id ? null : table.id)}
-                className={`
-                  text-left relative overflow-hidden rounded-2xl border transition-all duration-300
-                  ${
-                    activeTable === table.id
-                      ? 'border-white/20 bg-white/10 shadow-2xl scale-[1.02]'
-                      : 'border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20'
-                  }
-                `}
-              >
-                <div className={`h-1 bg-gradient-to-r ${table.gradient}`} />
-
-                <div className="p-5">
-                  <div className="flex items-center gap-3 mb-3">
-                    <span className="text-3xl">{table.icon}</span>
-                    <div>
-                      <code className={`text-sm font-bold ${table.color}`}>{table.name}</code>
-                      <p className="text-xs text-slate-500 mt-0.5">{table.columns.length} kolom</p>
-                    </div>
-                  </div>
-
-                  <p className="text-xs text-slate-400 mb-3">{table.description}</p>
-
-                  <div className="space-y-1">
-                    {table.columns.slice(0, 4).map((col) => (
-                      <div key={col.name} className="flex items-center gap-2 text-xs">
-                        {col.constraints.includes('PRIMARY KEY') && (
-                          <Key className="w-3 h-3 text-amber-400 flex-shrink-0" />
-                        )}
-                        {col.constraints.some(c => c.includes('REFERENCES')) && !col.constraints.includes('PRIMARY KEY') && (
-                          <Link2 className="w-3 h-3 text-blue-400 flex-shrink-0" />
-                        )}
-                        {!col.constraints.includes('PRIMARY KEY') && !col.constraints.some(c => c.includes('REFERENCES')) && (
-                          <span className="w-3 h-3 flex-shrink-0" />
-                        )}
-                        <code className="text-slate-300">{col.name}</code>
-                        <span className="text-slate-600 ml-auto">{col.type}</span>
-                      </div>
-                    ))}
-                    {table.columns.length > 4 && (
-                      <div className="text-xs text-slate-600 pl-5">+{table.columns.length - 4} kolom lainnya...</div>
-                    )}
-                  </div>
-                </div>
-              </button>
             ))}
           </div>
         </div>
 
-        {/* Detailed Table View */}
-        {activeTable && (
-          <div className="mb-12">
-            {(() => {
-              const table = tables.find(t => t.id === activeTable);
-              if (!table) return null;
-
-              return (
-                <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
-                  <div className={`h-1 bg-gradient-to-r ${table.gradient}`} />
-
-                  <div className="p-6">
-                    <div className="flex items-center gap-3 mb-6">
-                      <span className="text-3xl">{table.icon}</span>
-                      <div>
-                        <code className={`text-xl font-bold ${table.color}`}>{table.name}</code>
-                        <p className="text-sm text-slate-400 mt-1">{table.description}</p>
-                      </div>
-                    </div>
-
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="border-b border-white/10">
-                            <th className="text-left py-2 px-3 text-xs font-semibold text-slate-400 uppercase">Kolom</th>
-                            <th className="text-left py-2 px-3 text-xs font-semibold text-slate-400 uppercase">Tipe Data</th>
-                            <th className="text-left py-2 px-3 text-xs font-semibold text-slate-400 uppercase">Constraints</th>
-                            <th className="text-left py-2 px-3 text-xs font-semibold text-slate-400 uppercase hidden sm:table-cell">Deskripsi</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {table.columns.map((col) => (
-                            <tr key={col.name} className="border-b border-white/5 hover:bg-white/5 transition-colors">
-                              <td className="py-2.5 px-3">
-                                <div className="flex items-center gap-2">
-                                  {col.constraints.includes('PRIMARY KEY') && (
-                                    <Key className="w-4 h-4 text-amber-400" />
-                                  )}
-                                  {col.constraints.some(c => c.includes('REFERENCES')) && !col.constraints.includes('PRIMARY KEY') && (
-                                    <Link2 className="w-4 h-4 text-blue-400" />
-                                  )}
-                                  {col.constraints.includes('UNIQUE') && !col.constraints.includes('PRIMARY KEY') && (
-                                    <span className="text-emerald-400">⚡</span>
-                                  )}
-                                  <code className={`font-medium ${table.color}`}>{col.name}</code>
-                                </div>
-                              </td>
-                              <td className="py-2.5 px-3">
-                                <code className="text-xs px-2 py-0.5 rounded bg-white/5 text-slate-300 border border-white/10">
-                                  {col.type}
-                                </code>
-                              </td>
-                              <td className="py-2.5 px-3">
-                                <div className="flex flex-wrap gap-1">
-                                  {col.constraints.map((c, i) => (
-                                    <span
-                                      key={i}
-                                      className={`text-[10px] px-1.5 py-0.5 rounded border ${getConstraintStyle(c)}`}
-                                    >
-                                      {c}
-                                    </span>
-                                  ))}
-                                </div>
-                              </td>
-                              <td className="py-2.5 px-3 text-slate-400 text-xs hidden sm:table-cell">
-                                {col.description}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
-              );
-            })()}
-          </div>
-        )}
-
-        {/* SQL Script */}
+        {/* 5-Step Flow */}
         <div className="mb-12">
           <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-2">
-            <Code2 className="w-6 h-6 text-emerald-400" />
-            SQL Migration Script
+            <GitBranch className="w-6 h-6 text-orange-400" />
+            5-Step Processing Flow
+          </h2>
+
+          <div className="space-y-3">
+            {steps.map((step) => {
+              const Icon = step.icon;
+              const isActive = activeStep === step.num;
+              return (
+                <div
+                  key={step.num}
+                  onClick={() => setActiveStep(isActive ? null : step.num)}
+                  className={`cursor-pointer rounded-xl border transition-all ${
+                    isActive
+                      ? 'bg-white/10 border-white/20'
+                      : 'bg-white/5 border-white/10 hover:bg-white/10'
+                  }`}
+                >
+                  <div className="flex items-center gap-4 p-4">
+                    <div
+                      className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
+                      style={{
+                        backgroundColor: `rgba(${getColorRgb(step.color)}, 0.2)`,
+                        color: `rgb(${getColorRgb(step.color)})`,
+                      }}
+                    >
+                      <Icon className="w-5 h-5" />
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-slate-500">Step {step.num}</span>
+                        <h4 className="text-sm font-semibold text-white">{step.title}</h4>
+                      </div>
+                      <p className="text-xs text-slate-400 mt-0.5">{step.desc}</p>
+                    </div>
+                  </div>
+
+                  {isActive && (
+                    <div className="px-4 pb-4">
+                      <div className="bg-black/30 rounded-lg p-3 border border-white/5">
+                        <pre className="text-xs text-slate-300 overflow-x-auto font-mono">
+                          <code>{step.code}</code>
+                        </pre>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* processPaidOrder Deep Dive */}
+        <div className="mb-12">
+          <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-2">
+            <Lock className="w-6 h-6 text-emerald-400" />
+            processPaidOrder - Transaction Flow
+          </h2>
+
+          <div className="grid md:grid-cols-2 gap-4 mb-6">
+            <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+              <h4 className="text-sm font-semibold text-white mb-3">1. Query Membership & Paylater</h4>
+              <pre className="text-xs text-slate-300 overflow-x-auto font-mono">
+                <code>{`SELECT m.id as membership_id, 
+       l.id as loan_id, 
+       l.remaining_limit 
+FROM memberships m 
+LEFT JOIN loans l ON m.id = l.membership_id 
+  AND l.loan_type = 'PAYLATER' 
+  AND l.status = 'ACTIVE'
+WHERE m.user_id = (
+  SELECT id FROM users WHERE member_id = $1
+) AND m.cooperative_id = $2`}</code>
+              </pre>
+            </div>
+
+            <div className="bg-white/5 border border-white/10 rounded-xl p-4">
+              <h4 className="text-sm font-semibold text-white mb-3">2. Validation Checks</h4>
+              <div className="space-y-2 text-xs">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="text-slate-300">Member exists</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="text-slate-300">Paylater loan is ACTIVE</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="text-slate-300">remaining_limit &gt;= order_amount</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-xl p-4">
+            <h4 className="text-sm font-semibold text-emerald-400 mb-3">3. Transaction (ACID)</h4>
+            <div className="space-y-2">
+              {[
+                { step: 'BEGIN', desc: 'Mulai transaction' },
+                { step: 'UPDATE loans', desc: 'remaining_limit = remaining_limit - order_amount' },
+                { step: 'INSERT transactions', desc: "type = 'PAYLATER_PURCHASE'" },
+                { step: 'COMMIT', desc: 'Commit semua perubahan' },
+              ].map((item) => (
+                <div key={item.step} className="flex items-center gap-3 p-2 rounded-lg bg-white/5">
+                  <code className="text-xs font-bold text-emerald-400 w-32 flex-shrink-0">{item.step}</code>
+                  <span className="text-xs text-slate-300">{item.desc}</span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 p-2 rounded-lg bg-rose-500/5 border border-rose-500/20">
+              <code className="text-xs font-bold text-rose-400">ROLLBACK</code>
+              <span className="text-xs text-slate-400 ml-2">jika ada error di tengah proses</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Full Code Display */}
+        <div className="mb-12">
+          <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-2">
+            <CodeIcon />
+            Implementation Code
           </h2>
 
           <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
@@ -429,7 +446,7 @@ export default function App() {
                 <span className="w-3 h-3 rounded-full bg-red-500/60" />
                 <span className="w-3 h-3 rounded-full bg-amber-500/60" />
                 <span className="w-3 h-3 rounded-full bg-emerald-500/60" />
-                <span className="text-xs text-slate-500 ml-2 font-mono">agrid_integration.sql</span>
+                <span className="text-xs text-slate-500 ml-2 font-mono">routes/webhooks.agrid.js</span>
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -440,24 +457,26 @@ export default function App() {
                   {copied ? 'Copied!' : 'Copy'}
                 </button>
                 <button
-                  onClick={() => setShowSQL(!showSQL)}
-                  className="px-3 py-1 bg-emerald-500/20 border border-emerald-500/30 rounded text-xs text-emerald-400 hover:bg-emerald-500/30 transition-colors"
+                  onClick={() => setShowCode(!showCode)}
+                  className="px-3 py-1 bg-orange-500/20 border border-orange-500/30 rounded text-xs text-orange-400 hover:bg-orange-500/30 transition-colors"
                 >
-                  {showSQL ? '▼ Collapse' : '▶ Show SQL'}
+                  {showCode ? '▼ Collapse' : '▶ Show Full Code'}
                 </button>
               </div>
             </div>
 
-            {showSQL ? (
+            {showCode ? (
               <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
                 <pre className="p-4 text-xs font-mono leading-relaxed">
                   <code>
-                    {sqlScript.split('\n').map((line, i) => (
+                    {webhookCode.split('\n').map((line, i) => (
                       <div key={i} className="flex hover:bg-white/5 transition-colors">
-                        <span className="text-slate-600 select-none w-10 text-right pr-4 flex-shrink-0">{i + 1}</span>
+                        <span className="text-slate-600 select-none w-10 text-right pr-4 flex-shrink-0">
+                          {i + 1}
+                        </span>
                         <span
                           className="flex-1"
-                          dangerouslySetInnerHTML={{ __html: highlightSQL(line) }}
+                          dangerouslySetInnerHTML={{ __html: highlightJS(line) }}
                         />
                       </div>
                     ))}
@@ -466,113 +485,126 @@ export default function App() {
               </div>
             ) : (
               <div className="p-8 text-center">
-                <Database className="w-12 h-12 text-emerald-400/50 mx-auto mb-3" />
+                <Webhook className="w-12 h-12 text-orange-400/50 mx-auto mb-3" />
                 <p className="text-sm text-slate-400 mb-4">
-                  Full SQL script untuk membuat tabel agrid_integrations dan agrid_webhook_logs
+                  Full production-ready webhook implementation
                 </p>
                 <button
-                  onClick={() => setShowSQL(true)}
-                  className="px-5 py-2 bg-gradient-to-r from-emerald-500 to-teal-500 text-white text-sm font-medium rounded-lg shadow-lg shadow-emerald-500/25 hover:shadow-emerald-500/40 transition-all"
+                  onClick={() => setShowCode(true)}
+                  className="px-5 py-2 bg-gradient-to-r from-orange-500 to-amber-500 text-white text-sm font-medium rounded-lg shadow-lg shadow-orange-500/25 hover:shadow-orange-500/40 transition-all"
                 >
-                  Lihat SQL Script
+                  Lihat Full Code
                 </button>
               </div>
             )}
           </div>
         </div>
 
-        {/* Usage Examples */}
-        <div className="mb-12">
-          <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-2">
-            <Code2 className="w-6 h-6 text-amber-400" />
-            Contoh Penggunaan
-          </h2>
-
-          <div className="space-y-4">
-            <div className="bg-white/5 border border-white/10 rounded-xl p-4">
-              <h4 className="text-sm font-semibold text-white mb-2">1. Setup Integrasi untuk Koperasi</h4>
-              <pre className="text-xs text-slate-300 overflow-x-auto font-mono">
-                <code>{`INSERT INTO agrid_integrations (
-  cooperative_id, 
-  agrid_client_id, 
-  agrid_client_secret, 
-  webhook_secret
-) VALUES (
-  'uuid-koperasi-here',
-  'agrid_client_xxxxx',
-  'encrypted_secret_xxxxx',  -- Enkripsi di aplikasi
-  'webhook_secret_xxxxx'
-);`}</code>
-              </pre>
+        {/* Request/Response */}
+        <div className="grid md:grid-cols-2 gap-6 mb-12">
+          <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
+            <div className="px-4 py-3 bg-white/5 border-b border-white/10">
+              <span className="text-xs text-slate-500 font-mono">Request (from AGRID)</span>
             </div>
+            <pre className="p-4 text-xs text-slate-300 overflow-x-auto font-mono">
+              <code>{`POST /api/v1/webhooks/agrid
+Headers:
+  x-agrid-signature: a1b2c3d4e5f6...
+  Content-Type: application/json
 
-            <div className="bg-white/5 border border-white/10 rounded-xl p-4">
-              <h4 className="text-sm font-semibold text-white mb-2">2. Log Webhook yang Diterima</h4>
-              <pre className="text-xs text-slate-300 overflow-x-auto font-mono">
-                <code>{`INSERT INTO agrid_webhook_logs (
-  agrid_event_id,
-  cooperative_id,
-  event_type,
-  payload,
-  signature,
-  status
-) VALUES (
-  'evt_agr_123456',
-  'uuid-koperasi-here',
-  'ORDER.PAID',
-  '{"order_id": "ord_001", "amount": 750000}',
-  'hmac_signature_here',
-  'PENDING'
-);`}</code>
-              </pre>
-            </div>
+Body:
+{
+  "event_id": "evt_agr_123456",
+  "event_type": "ORDER.PAID",
+  "cooperative_id": "uuid-coop",
+  "member_id": "AGR-2024-000001",
+  "order_amount": 750000,
+  "agrid_order_id": "ord_agr_001"
+}`}</code>
+            </pre>
+          </div>
 
-            <div className="bg-white/5 border border-white/10 rounded-xl p-4">
-              <h4 className="text-sm font-semibold text-white mb-2">3. Query Webhook Logs untuk Audit</h4>
-              <pre className="text-xs text-slate-300 overflow-x-auto font-mono">
-                <code>{`SELECT 
-  event_type,
-  COUNT(*) as total,
-  COUNT(*) FILTER (WHERE status = 'SUCCESS') as success,
-  COUNT(*) FILTER (WHERE status = 'FAILED') as failed
-FROM agrid_webhook_logs
-WHERE created_at > NOW() - INTERVAL '7 days'
-GROUP BY event_type
-ORDER BY total DESC;`}</code>
-              </pre>
+          <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
+            <div className="px-4 py-3 bg-white/5 border-b border-white/10">
+              <span className="text-xs text-slate-500 font-mono">Response (to AGRID)</span>
             </div>
+            <pre className="p-4 text-xs text-slate-300 overflow-x-auto font-mono">
+              <code>{`// Success (200 OK)
+{
+  "message": "Webhook received and processed"
+}
+
+// Already processed (200 OK - idempotent)
+{
+  "message": "Event already processed"
+}
+
+// Invalid signature (401)
+{
+  "error": "Invalid signature"
+}
+
+// Integration not active (404)
+{
+  "error": "Integrasi tidak aktif"
+}
+
+// Server error (500)
+{
+  "error": "Internal Server Error"
+}`}</code>
+            </pre>
           </div>
         </div>
 
-        {/* Security Notes */}
-        <div className="bg-gradient-to-r from-emerald-500/5 to-blue-500/5 border border-emerald-500/20 rounded-2xl p-6">
-          <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
-            <Shield className="w-4 h-4 text-emerald-400" />
-            Security Best Practices
-          </h3>
-          <div className="grid sm:grid-cols-2 gap-3">
+        {/* Database Dependencies */}
+        <div className="mb-12">
+          <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-2">
+            <Database className="w-6 h-6 text-blue-400" />
+            Database Dependencies
+          </h2>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
             {[
-              { label: 'Encrypt Secrets', desc: 'Enkripsi client_secret & webhook_secret di level aplikasi' },
-              { label: 'Rotate Keys', desc: 'Rotate credentials secara berkala (90 hari)' },
-              { label: 'Verify Signature', desc: 'Selalu verifikasi HMAC signature sebelum proses webhook' },
-              { label: 'Idempotency', desc: 'Gunakan agrid_event_id untuk mencegah duplicate processing' },
-            ].map(item => (
-              <div key={item.label} className="flex items-start gap-2">
-                <span className="text-emerald-400 text-xs mt-0.5">✓</span>
-                <div>
-                  <div className="text-xs font-semibold text-white">{item.label}</div>
-                  <div className="text-[10px] text-slate-500">{item.desc}</div>
-                </div>
+              { table: 'agrid_integrations', desc: 'webhook_secret per koperasi', color: 'emerald' },
+              { table: 'agrid_webhook_logs', desc: 'Audit trail webhook', color: 'blue' },
+              { table: 'memberships', desc: 'Data keanggotaan', color: 'purple' },
+              { table: 'loans', desc: 'Paylater remaining_limit', color: 'amber' },
+            ].map((item) => (
+              <div key={item.table} className="bg-white/5 border border-white/5 rounded-lg p-3">
+                <code className={`text-xs font-bold text-${item.color}-400 block mb-1`}>
+                  {item.table}
+                </code>
+                <p className="text-[10px] text-slate-500">{item.desc}</p>
               </div>
             ))}
           </div>
         </div>
 
         {/* Footer */}
-        <div className="mt-16 text-center text-slate-400 text-sm">
+        <div className="text-center text-slate-400 text-sm">
           <p>© 2026 AGR.BIZ.ID - KOPERASI DIGITAL. All rights reserved.</p>
         </div>
       </div>
     </div>
   );
+}
+
+function CodeIcon() {
+  return (
+    <svg className="w-6 h-6 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+    </svg>
+  );
+}
+
+function getColorRgb(color: string): string {
+  const colors: Record<string, string> = {
+    emerald: '16, 185, 129',
+    blue: '59, 130, 246',
+    amber: '245, 158, 11',
+    purple: '168, 85, 247',
+    rose: '244, 63, 94',
+    orange: '249, 115, 22',
+  };
+  return colors[color] || '255, 255, 255';
 }
