@@ -57,7 +57,7 @@ export async function buildSnapshot(client = createSupabaseClient()) {
     });
   }
 
-  return {
+  const snapshot = {
     snapshot: true,
     cooperatives: cooperatives.map((coop) => ({
       id: String(coop.id),
@@ -67,6 +67,21 @@ export async function buildSnapshot(client = createSupabaseClient()) {
       members: byCooperative.get(String(coop.id)),
     })),
   };
+  const seenCodes = new Set();
+  for (const coop of snapshot.cooperatives) {
+    if (!/^[A-Z0-9_-]{2,40}$/.test(coop.code) || !coop.name) {
+      throw new Error('Kode atau nama koperasi tidak valid; sinkronisasi dibatalkan.');
+    }
+    if (seenCodes.has(coop.code)) throw new Error('Kode koperasi duplikat; sinkronisasi dibatalkan.');
+    seenCodes.add(coop.code);
+    if (coop.members.length > 10000) throw new Error('Batas AGR-ID adalah 10.000 anggota per koperasi.');
+    const memberNumbers = new Set();
+    for (const member of coop.members) {
+      if (memberNumbers.has(member.number)) throw new Error('Nomor anggota duplikat di koperasi ' + coop.code + '.');
+      memberNumbers.add(member.number);
+    }
+  }
+  return snapshot;
 }
 
 export async function syncToAgrid() {
