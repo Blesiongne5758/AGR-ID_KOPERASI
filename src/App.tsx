@@ -1,271 +1,495 @@
 import { useState } from 'react';
-import { 
-  Monitor, 
-  Server, 
-  Cpu, 
-  Database, 
-  Zap,
-  ChevronRight,
-  Code2,
-  Shield,
-  Layers
-} from 'lucide-react';
+import { Database, Table, Key, Link2, Hash, Calendar, ChevronDown, ChevronRight, Copy, Check, Code2, Shield } from 'lucide-react';
 
-interface Layer {
-  id: string;
+interface Column {
   name: string;
-  icon: any;
-  technology: string;
-  role: string;
-  color: string;
-  gradient: string;
+  type: string;
+  constraints: string[];
+  description: string;
 }
 
-const layers: Layer[] = [
+interface TableSchema {
+  id: string;
+  name: string;
+  number: number;
+  description: string;
+  icon: string;
+  color: string;
+  gradient: string;
+  columns: Column[];
+}
+
+const tables: TableSchema[] = [
   {
-    id: 'frontend',
-    name: 'Frontend (UI/UX)',
-    icon: Monitor,
-    technology: 'HTML5, Tailwind CSS, React.js (atau Vue.js)',
-    role: 'Single Page Application (SPA). Mobile-first untuk Anggota, Dashboard Data-rich untuk Admin Koperasi.',
+    id: 'cooperatives',
+    name: 'cooperatives',
+    number: 1,
+    description: 'Tabel Koperasi — Menyimpan data entitas koperasi yang terdaftar dalam sistem.',
+    icon: '🏛️',
     color: 'text-blue-400',
     gradient: 'from-blue-500 to-cyan-500',
+    columns: [
+      { name: 'id', type: 'UUID', constraints: ['PRIMARY KEY', 'DEFAULT gen_random_uuid()'], description: 'Primary key unik untuk setiap koperasi' },
+      { name: 'name', type: 'VARCHAR(150)', constraints: ['NOT NULL'], description: 'Nama lengkap koperasi' },
+      { name: 'coop_code', type: 'VARCHAR(20)', constraints: ['UNIQUE', 'NOT NULL'], description: "Kode unik koperasi (misal: 'AGR', 'KOPMAJU')" },
+      { name: 'legal_entity_number', type: 'VARCHAR(50)', constraints: [], description: 'Nomor badan hukum koperasi' },
+      { name: 'created_at', type: 'TIMESTAMP', constraints: ['DEFAULT CURRENT_TIMESTAMP'], description: 'Waktu pendaftaran koperasi' },
+    ],
   },
   {
-    id: 'gateway',
-    name: 'API Gateway / BFF',
-    icon: Server,
-    technology: 'Node.js (NestJS atau Express)',
-    role: 'Menangani routing awal, validasi token, agregasi data, dan jembatan integrasi API ke AGRID Marketplace.',
+    id: 'users',
+    name: 'users',
+    number: 2,
+    description: 'Tabel Pengguna Global — Menyimpan kredensial login dan data profil pengguna.',
+    icon: '👤',
     color: 'text-emerald-400',
     gradient: 'from-emerald-500 to-teal-500',
+    columns: [
+      { name: 'id', type: 'UUID', constraints: ['PRIMARY KEY', 'DEFAULT gen_random_uuid()'], description: 'Primary key unik untuk setiap pengguna' },
+      { name: 'member_id', type: 'VARCHAR(30)', constraints: ['UNIQUE', 'NOT NULL'], description: 'ID Unik Anggota (Primary Login Key)' },
+      { name: 'password_hash', type: 'VARCHAR(255)', constraints: ['NOT NULL'], description: 'Hash password (bcrypt/argon2)' },
+      { name: 'full_name', type: 'VARCHAR(150)', constraints: ['NOT NULL'], description: 'Nama lengkap pengguna' },
+      { name: 'phone', type: 'VARCHAR(20)', constraints: ['UNIQUE'], description: 'Nomor telepon unik' },
+      { name: 'created_at', type: 'TIMESTAMP', constraints: ['DEFAULT CURRENT_TIMESTAMP'], description: 'Waktu pembuatan akun' },
+    ],
   },
   {
-    id: 'backend',
-    name: 'Core Backend',
-    icon: Cpu,
-    technology: 'Golang (Gin atau Fiber)',
-    role: 'Mesin utama keuangan: Generate ID Unik (dengan Pessimistic Locking), perhitungan bunga, double-entry ledger, dan manajemen transaksi berat.',
+    id: 'memberships',
+    name: 'memberships',
+    number: 3,
+    description: 'Tabel Keanggotaan — Menghubungkan user ke koperasi dengan peran tertentu.',
+    icon: '🔗',
     color: 'text-purple-400',
     gradient: 'from-purple-500 to-violet-500',
+    columns: [
+      { name: 'id', type: 'UUID', constraints: ['PRIMARY KEY', 'DEFAULT gen_random_uuid()'], description: 'Primary key keanggotaan' },
+      { name: 'user_id', type: 'UUID', constraints: ['FK → users.id', 'ON DELETE CASCADE'], description: 'Referensi ke tabel users' },
+      { name: 'cooperative_id', type: 'UUID', constraints: ['FK → cooperatives.id', 'ON DELETE CASCADE'], description: 'Referensi ke tabel cooperatives' },
+      { name: 'role', type: 'VARCHAR(20)', constraints: ["DEFAULT 'MEMBER'"], description: "Peran: 'MEMBER', 'ADMIN', 'MANAGER'" },
+      { name: 'join_date', type: 'DATE', constraints: ['DEFAULT CURRENT_DATE'], description: 'Tanggal bergabung' },
+      { name: 'status', type: 'VARCHAR(20)', constraints: ["DEFAULT 'ACTIVE'"], description: "Status: 'ACTIVE', 'INACTIVE', dll" },
+    ],
   },
   {
-    id: 'database',
-    name: 'Database',
-    icon: Database,
-    technology: 'PostgreSQL',
-    role: 'Penyimpanan data relasional dengan fitur Row-Level Security (RLS) dan ACID Compliance.',
+    id: 'id_sequences',
+    name: 'id_sequences',
+    number: 4,
+    description: 'Tabel Antrian ID — Mencegah race condition saat generate ID transaksi.',
+    icon: '🔢',
     color: 'text-amber-400',
     gradient: 'from-amber-500 to-orange-500',
+    columns: [
+      { name: 'cooperative_id', type: 'UUID', constraints: ['PRIMARY KEY', 'FK → cooperatives.id', 'ON DELETE CASCADE'], description: 'Primary key & referensi ke koperasi' },
+      { name: 'current_year', type: 'INT', constraints: ['NOT NULL'], description: 'Tahun berjalan untuk penomoran' },
+      { name: 'current_sequence', type: 'INT', constraints: ['NOT NULL', 'DEFAULT 0'], description: 'Nomor urut terakhir (Pessimistic Locking)' },
+    ],
   },
   {
-    id: 'cache',
-    name: 'Cache & Queue',
-    icon: Zap,
-    technology: 'Redis',
-    role: 'Menyimpan sesi login, rate limiting, dan antrian notifikasi (WhatsApp/Email).',
+    id: 'savings',
+    name: 'savings',
+    number: 5,
+    description: 'Tabel Simpanan — Ledger sederhana untuk mencatat saldo simpanan anggota.',
+    icon: '💰',
     color: 'text-rose-400',
     gradient: 'from-rose-500 to-pink-500',
+    columns: [
+      { name: 'id', type: 'UUID', constraints: ['PRIMARY KEY', 'DEFAULT gen_random_uuid()'], description: 'Primary key simpanan' },
+      { name: 'membership_id', type: 'UUID', constraints: ['FK → memberships.id'], description: 'Referensi ke keanggotaan' },
+      { name: 'type', type: 'VARCHAR(20)', constraints: ['NOT NULL'], description: "Jenis: 'POKOK', 'WAJIB', 'SUKARELA'" },
+      { name: 'balance', type: 'NUMERIC(15,2)', constraints: ['DEFAULT 0.00'], description: 'Saldo simpanan' },
+      { name: 'updated_at', type: 'TIMESTAMP', constraints: ['DEFAULT CURRENT_TIMESTAMP'], description: 'Waktu terakhir diupdate' },
+    ],
   },
 ];
 
+const relations = [
+  { from: 'users', to: 'memberships', label: '1:N', type: 'one-to-many' },
+  { from: 'cooperatives', to: 'memberships', label: '1:N', type: 'one-to-many' },
+  { from: 'cooperatives', to: 'id_sequences', label: '1:1', type: 'one-to-one' },
+  { from: 'memberships', to: 'savings', label: '1:N', type: 'one-to-many' },
+];
+
+const sqlScript = `-- 1. Tabel Koperasi
+CREATE TABLE cooperatives (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(150) NOT NULL,
+    coop_code VARCHAR(20) UNIQUE NOT NULL,
+    legal_entity_number VARCHAR(50),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 2. Tabel Pengguna Global
+CREATE TABLE users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    member_id VARCHAR(30) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    full_name VARCHAR(150) NOT NULL,
+    phone VARCHAR(20) UNIQUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 3. Tabel Keanggotaan
+CREATE TABLE memberships (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    cooperative_id UUID REFERENCES cooperatives(id) ON DELETE CASCADE,
+    role VARCHAR(20) DEFAULT 'MEMBER',
+    join_date DATE DEFAULT CURRENT_DATE,
+    status VARCHAR(20) DEFAULT 'ACTIVE',
+    UNIQUE(user_id, cooperative_id)
+);
+
+-- 4. Tabel Antrian ID
+CREATE TABLE id_sequences (
+    cooperative_id UUID PRIMARY KEY REFERENCES cooperatives(id) ON DELETE CASCADE,
+    current_year INT NOT NULL,
+    current_sequence INT NOT NULL DEFAULT 0
+);
+
+-- 5. Tabel Simpanan
+CREATE TABLE savings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    membership_id UUID REFERENCES memberships(id),
+    type VARCHAR(20) NOT NULL,
+    balance NUMERIC(15,2) DEFAULT 0.00,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);`;
+
+function highlightSQL(code: string): string {
+  let highlighted = code
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+
+  highlighted = highlighted.replace(/(--.*$)/gm, '<span class="text-slate-500 italic">$1</span>');
+  highlighted = highlighted.replace(/('[^']*')/g, '<span class="text-emerald-400">$1</span>');
+
+  const keywords = ['CREATE', 'TABLE', 'UUID', 'PRIMARY', 'KEY', 'DEFAULT', 'NOT', 'NULL', 'UNIQUE', 'REFERENCES', 'ON', 'DELETE', 'CASCADE', 'VARCHAR', 'INT', 'TIMESTAMP', 'DATE', 'NUMERIC', 'CURRENT_TIMESTAMP', 'CURRENT_DATE', 'gen_random_uuid'];
+  keywords.forEach(kw => {
+    const regex = new RegExp(`\\b(${kw})\\b`, 'g');
+    highlighted = highlighted.replace(regex, '<span class="text-purple-400 font-semibold">$1</span>');
+  });
+
+  highlighted = highlighted.replace(/\b(\d+)\b/g, '<span class="text-amber-400">$1</span>');
+
+  return highlighted;
+}
+
+function getConstraintStyle(constraint: string): string {
+  if (constraint.includes('PRIMARY KEY')) return 'bg-amber-500/20 text-amber-400 border-amber-500/30';
+  if (constraint.includes('UNIQUE')) return 'bg-purple-500/20 text-purple-400 border-purple-500/30';
+  if (constraint.includes('NOT NULL')) return 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30';
+  if (constraint.includes('FK')) return 'bg-blue-500/20 text-blue-400 border-blue-500/30';
+  if (constraint.includes('DEFAULT')) return 'bg-slate-500/20 text-slate-400 border-slate-500/30';
+  return 'bg-white/5 text-slate-400 border-white/10';
+}
+
 export default function App() {
-  const [activeLayer, setActiveLayer] = useState<string | null>(null);
+  const [activeTable, setActiveTable] = useState<string | null>(null);
+  const [showSQL, setShowSQL] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(sqlScript).catch(() => {});
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const totalColumns = tables.reduce((sum, t) => sum + t.columns.length, 0);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
-      {/* Background Pattern */}
       <div className="absolute inset-0 bg-grid-white/[0.02] bg-[size:16px_16px]" />
       
       <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         {/* Header */}
         <div className="text-center mb-16">
           <div className="flex items-center justify-center gap-3 mb-6">
-            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center shadow-2xl shadow-emerald-500/20">
-              <Layers className="w-8 h-8 text-white" />
+            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center shadow-2xl shadow-amber-500/20">
+              <Database className="w-8 h-8 text-white" />
             </div>
           </div>
           <h1 className="text-4xl sm:text-5xl font-bold text-white mb-4">
-            Arsitektur Sistem Koperasi Digital
+            Skema Database Koperasi
           </h1>
           <p className="text-xl text-slate-300 max-w-3xl mx-auto">
-            Tech Stack & Layer Arsitektur untuk Sistem Manajemen Koperasi Terintegrasi
+            PostgreSQL Schema dengan 5 Tabel Utama untuk Sistem Manajemen Koperasi Multi-Tenant
           </p>
         </div>
 
-        {/* Architecture Overview */}
-        <div className="mb-16">
-          <h2 className="text-2xl font-bold text-white mb-8 flex items-center gap-2">
-            <Layers className="w-6 h-6 text-emerald-400" />
-            5 Layer Arsitektur
+        {/* Stats */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-12">
+          {[
+            { label: 'Tabel', value: tables.length.toString(), icon: Table },
+            { label: 'Total Kolom', value: totalColumns.toString(), icon: Hash },
+            { label: 'Relasi FK', value: relations.length.toString(), icon: Link2 },
+            { label: 'ACID', value: '✓', icon: Database },
+          ].map((stat) => {
+            const Icon = stat.icon;
+            return (
+              <div key={stat.label} className="bg-white/5 border border-white/10 rounded-xl p-4 text-center">
+                <Icon className="w-6 h-6 text-amber-400 mx-auto mb-2" />
+                <div className="text-2xl font-bold text-white">{stat.value}</div>
+                <div className="text-xs text-slate-400">{stat.label}</div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Tables Overview */}
+        <div className="mb-12">
+          <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-2">
+            <Table className="w-6 h-6 text-amber-400" />
+            5 Tabel Utama
           </h2>
-          
-          <div className="space-y-4">
-            {layers.map((layer, index) => {
-              const Icon = layer.icon;
-              const isActive = activeLayer === layer.id;
-              
+
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {tables.map((table) => (
+              <button
+                key={table.id}
+                onClick={() => setActiveTable(activeTable === table.id ? null : table.id)}
+                className={`
+                  text-left relative overflow-hidden rounded-2xl border transition-all duration-300
+                  ${activeTable === table.id
+                    ? 'border-white/20 bg-white/10 shadow-2xl scale-[1.02]'
+                    : 'border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20'
+                  }
+                `}
+              >
+                <div className={`h-1 bg-gradient-to-r ${table.gradient}`} />
+                
+                <div className="p-5">
+                  <div className="flex items-center gap-3 mb-3">
+                    <span className="text-2xl">{table.icon}</span>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className={`text-xs font-bold px-2 py-0.5 rounded ${table.color} bg-white/5`}>
+                          #{table.number}
+                        </span>
+                        <code className={`text-sm font-bold ${table.color}`}>{table.name}</code>
+                      </div>
+                      <p className="text-xs text-slate-500 mt-0.5">{table.columns.length} kolom</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    {table.columns.slice(0, 3).map((col) => (
+                      <div key={col.name} className="flex items-center gap-2 text-xs">
+                        {col.constraints.includes('PRIMARY KEY') && (
+                          <Key className="w-3 h-3 text-amber-400 flex-shrink-0" />
+                        )}
+                        {col.constraints.some(c => c.includes('FK')) && !col.constraints.includes('PRIMARY KEY') && (
+                          <Link2 className="w-3 h-3 text-blue-400 flex-shrink-0" />
+                        )}
+                        {!col.constraints.includes('PRIMARY KEY') && !col.constraints.some(c => c.includes('FK')) && (
+                          <span className="w-3 h-3 flex-shrink-0" />
+                        )}
+                        <code className="text-slate-300">{col.name}</code>
+                        <span className="text-slate-600 ml-auto">{col.type}</span>
+                      </div>
+                    ))}
+                    {table.columns.length > 3 && (
+                      <div className="text-xs text-slate-600 pl-5">+{table.columns.length - 3} kolom lainnya...</div>
+                    )}
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Detailed Table View */}
+        {activeTable && (
+          <div className="mb-12">
+            {(() => {
+              const table = tables.find(t => t.id === activeTable);
+              if (!table) return null;
+
               return (
-                <div
-                  key={layer.id}
-                  onClick={() => setActiveLayer(isActive ? null : layer.id)}
-                  className={`
-                    relative overflow-hidden rounded-2xl border transition-all duration-300 cursor-pointer
-                    ${isActive 
-                      ? 'border-white/20 bg-white/10 shadow-2xl' 
-                      : 'border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20'
-                    }
-                  `}
-                >
-                  {/* Gradient Accent */}
-                  <div className={`absolute top-0 left-0 right-0 h-1 bg-gradient-to-r ${layer.gradient}`} />
+                <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
+                  <div className={`h-1 bg-gradient-to-r ${table.gradient}`} />
                   
                   <div className="p-6">
-                    <div className="flex items-start gap-4">
-                      {/* Icon */}
-                      <div className={`
-                        w-14 h-14 rounded-xl bg-gradient-to-br ${layer.gradient} 
-                        flex items-center justify-center flex-shrink-0 shadow-lg
-                      `}>
-                        <Icon className="w-7 h-7 text-white" />
-                      </div>
-                      
-                      {/* Content */}
-                      <div className="flex-1">
-                        <div className="flex items-center gap-3 mb-2">
-                          <h3 className="text-xl font-bold text-white">
-                            {layer.name}
-                          </h3>
-                          <ChevronRight className={`
-                            w-5 h-5 text-slate-400 transition-transform duration-300
-                            ${isActive ? 'rotate-90' : ''}
-                          `} />
-                        </div>
-                        
-                        {/* Technology */}
-                        <div className="mb-3">
-                          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                            Teknologi
+                    <div className="flex items-center gap-3 mb-6">
+                      <span className="text-3xl">{table.icon}</span>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className={`text-xs font-bold px-2 py-0.5 rounded ${table.color} bg-white/5`}>
+                            Tabel {table.number}
                           </span>
-                          <p className={`text-sm font-semibold ${layer.color} mt-1`}>
-                            {layer.technology}
-                          </p>
+                          <code className={`text-xl font-bold ${table.color}`}>{table.name}</code>
                         </div>
-                        
-                        {/* Role */}
-                        <div>
-                          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                            Peran & Tanggung Jawab
-                          </span>
-                          <p className="text-sm text-slate-300 mt-1 leading-relaxed">
-                            {layer.role}
-                          </p>
-                        </div>
+                        <p className="text-sm text-slate-400 mt-1">{table.description}</p>
                       </div>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-white/10">
+                            <th className="text-left py-2 px-3 text-xs font-semibold text-slate-400 uppercase">Kolom</th>
+                            <th className="text-left py-2 px-3 text-xs font-semibold text-slate-400 uppercase">Tipe Data</th>
+                            <th className="text-left py-2 px-3 text-xs font-semibold text-slate-400 uppercase">Constraints</th>
+                            <th className="text-left py-2 px-3 text-xs font-semibold text-slate-400 uppercase hidden sm:table-cell">Deskripsi</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {table.columns.map((col) => (
+                            <tr key={col.name} className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                              <td className="py-2.5 px-3">
+                                <div className="flex items-center gap-2">
+                                  {col.constraints.includes('PRIMARY KEY') && (
+                                    <Key className="w-4 h-4 text-amber-400" />
+                                  )}
+                                  {col.constraints.some(c => c.includes('FK')) && !col.constraints.includes('PRIMARY KEY') && (
+                                    <Link2 className="w-4 h-4 text-blue-400" />
+                                  )}
+                                  {col.constraints.includes('UNIQUE') && !col.constraints.includes('PRIMARY KEY') && (
+                                    <span className="text-emerald-400">⚡</span>
+                                  )}
+                                  <code className={`font-medium ${table.color}`}>{col.name}</code>
+                                </div>
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <code className="text-xs px-2 py-0.5 rounded bg-white/5 text-slate-300 border border-white/10">
+                                  {col.type}
+                                </code>
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <div className="flex flex-wrap gap-1">
+                                  {col.constraints.map((c, i) => (
+                                    <span
+                                      key={i}
+                                      className={`text-[10px] px-1.5 py-0.5 rounded border ${getConstraintStyle(c)}`}
+                                    >
+                                      {c}
+                                    </span>
+                                  ))}
+                                </div>
+                              </td>
+                              <td className="py-2.5 px-3 text-slate-400 text-xs hidden sm:table-cell">
+                                {col.description}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
                   </div>
                 </div>
               );
-            })}
+            })()}
           </div>
-        </div>
+        )}
 
-        {/* Architecture Diagram */}
-        <div className="mb-16">
-          <h2 className="text-2xl font-bold text-white mb-8 flex items-center gap-2">
-            <Code2 className="w-6 h-6 text-emerald-400" />
-            Flow Arsitektur
+        {/* Relations */}
+        <div className="mb-12">
+          <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-2">
+            <Link2 className="w-6 h-6 text-blue-400" />
+            Relasi Antar Tabel
           </h2>
-          
-          <div className="bg-white/5 border border-white/10 rounded-2xl p-8">
-            <div className="flex flex-col items-center space-y-4">
-              {layers.map((layer, index) => {
-                const Icon = layer.icon;
-                return (
-                  <div key={layer.id} className="w-full">
-                    <div className={`
-                      flex items-center gap-4 p-4 rounded-xl bg-gradient-to-r ${layer.gradient} bg-opacity-10
-                      border border-white/10
-                    `}>
-                      <div className="w-12 h-12 rounded-lg bg-white/20 flex items-center justify-center flex-shrink-0">
-                        <Icon className="w-6 h-6 text-white" />
-                      </div>
-                      <div className="flex-1">
-                        <div className="text-white font-semibold">{layer.name}</div>
-                        <div className="text-white/70 text-sm">{layer.technology}</div>
-                      </div>
-                      <div className="text-white/50 text-xs font-mono">
-                        Layer {index + 1}
-                      </div>
-                    </div>
-                    
-                    {/* Arrow */}
-                    {index < layers.length - 1 && (
-                      <div className="flex justify-center py-2">
-                        <div className="w-0.5 h-8 bg-gradient-to-b from-white/20 to-white/5" />
-                      </div>
-                    )}
+
+          <div className="bg-white/5 border border-white/10 rounded-2xl p-6">
+            <div className="grid sm:grid-cols-2 gap-3">
+              {relations.map((rel, i) => (
+                <div key={i} className="flex items-center gap-3 p-3 rounded-lg bg-white/5 border border-white/5">
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                    <code className="text-xs text-blue-400 font-medium truncate">{rel.from}</code>
+                    <ChevronRight className="w-4 h-4 text-white/30 flex-shrink-0" />
+                    <code className="text-xs text-purple-400 font-medium truncate">{rel.to}</code>
                   </div>
-                );
-              })}
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-bold flex-shrink-0 ${
+                    rel.type === 'one-to-one' ? 'bg-amber-500/20 text-amber-400' : 'bg-emerald-500/20 text-emerald-400'
+                  }`}>
+                    {rel.label}
+                  </span>
+                </div>
+              ))}
             </div>
           </div>
         </div>
 
+        {/* SQL Script */}
+        <div className="mb-12">
+          <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-2">
+            <Code2 className="w-6 h-6 text-emerald-400" />
+            SQL Script
+          </h2>
+
+          <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 bg-white/5 border-b border-white/10">
+              <div className="flex items-center gap-2">
+                <span className="w-3 h-3 rounded-full bg-red-500/60" />
+                <span className="w-3 h-3 rounded-full bg-amber-500/60" />
+                <span className="w-3 h-3 rounded-full bg-emerald-500/60" />
+                <span className="text-xs text-slate-500 ml-2 font-mono">schema.sql</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleCopy}
+                  className="flex items-center gap-1.5 px-3 py-1 bg-white/5 border border-white/10 rounded text-xs text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                >
+                  {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                  {copied ? 'Copied!' : 'Copy'}
+                </button>
+                <button
+                  onClick={() => setShowSQL(!showSQL)}
+                  className="px-3 py-1 bg-amber-500/20 border border-amber-500/30 rounded text-xs text-amber-400 hover:bg-amber-500/30 transition-colors"
+                >
+                  {showSQL ? '▼ Collapse' : '▶ Show SQL'}
+                </button>
+              </div>
+            </div>
+
+            {showSQL ? (
+              <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+                <pre className="p-4 text-xs font-mono leading-relaxed">
+                  <code>
+                    {sqlScript.split('\n').map((line, i) => (
+                      <div key={i} className="flex hover:bg-white/5 transition-colors">
+                        <span className="text-slate-600 select-none w-10 text-right pr-4 flex-shrink-0">{i + 1}</span>
+                        <span
+                          className="flex-1"
+                          dangerouslySetInnerHTML={{ __html: highlightSQL(line) }}
+                        />
+                      </div>
+                    ))}
+                  </code>
+                </pre>
+              </div>
+            ) : (
+              <div className="p-8 text-center">
+                <Database className="w-12 h-12 text-amber-400/50 mx-auto mb-3" />
+                <p className="text-sm text-slate-400 mb-4">
+                  Full SQL script untuk membuat 5 tabel database koperasi
+                </p>
+                <button
+                  onClick={() => setShowSQL(true)}
+                  className="px-5 py-2 bg-gradient-to-r from-amber-500 to-orange-500 text-white text-sm font-medium rounded-lg shadow-lg shadow-amber-500/25 hover:shadow-amber-500/40 transition-all"
+                >
+                  Lihat SQL Script
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
         {/* Key Features */}
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {[
-            {
-              icon: Shield,
-              title: 'Multi-Tenant Architecture',
-              desc: 'Mendukung multiple koperasi dalam satu sistem dengan isolasi data',
-              color: 'text-emerald-400',
-              bg: 'bg-emerald-500/10',
-            },
-            {
-              icon: Zap,
-              title: 'High Performance',
-              desc: 'Golang backend dengan Redis cache untuk response time optimal',
-              color: 'text-amber-400',
-              bg: 'bg-amber-500/10',
-            },
-            {
-              icon: Database,
-              title: 'ACID Compliance',
-              desc: 'PostgreSQL dengan RLS untuk data integrity dan security',
-              color: 'text-blue-400',
-              bg: 'bg-blue-500/10',
-            },
-            {
-              icon: Server,
-              title: 'API Gateway Pattern',
-              desc: 'BFF (Backend for Frontend) untuk routing dan aggregasi data',
-              color: 'text-purple-400',
-              bg: 'bg-purple-500/10',
-            },
-            {
-              icon: Monitor,
-              title: 'Mobile-First Design',
-              desc: 'Responsive UI untuk anggota dan dashboard data-rich untuk admin',
-              color: 'text-cyan-400',
-              bg: 'bg-cyan-500/10',
-            },
-            {
-              icon: Code2,
-              title: 'Modern Tech Stack',
-              desc: 'React, Node.js, Golang, PostgreSQL, Redis - teknologi terkini',
-              color: 'text-rose-400',
-              bg: 'bg-rose-500/10',
-            },
+            { icon: Key, title: 'UUID Primary Key', desc: 'gen_random_uuid() untuk setiap tabel', color: 'text-amber-400', bg: 'bg-amber-500/10' },
+            { icon: Link2, title: 'Foreign Key + CASCADE', desc: 'Referential integrity dengan cascade delete', color: 'text-blue-400', bg: 'bg-blue-500/10' },
+            { icon: Shield, title: 'UNIQUE Constraints', desc: 'Mencegah duplikasi data kritis', color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
+            { icon: Hash, title: 'NUMERIC Precision', desc: 'NUMERIC(15,2) untuk akurasi keuangan', color: 'text-purple-400', bg: 'bg-purple-500/10' },
           ].map((feature) => {
             const Icon = feature.icon;
             return (
-              <div key={feature.title} className="bg-white/5 border border-white/10 rounded-xl p-6 hover:bg-white/10 transition-all">
-                <div className={`w-12 h-12 rounded-xl ${feature.bg} flex items-center justify-center mb-4`}>
-                  <Icon className={`w-6 h-6 ${feature.color}`} />
+              <div key={feature.title} className="bg-white/5 border border-white/10 rounded-xl p-4 hover:bg-white/10 transition-all">
+                <div className={`w-10 h-10 rounded-lg ${feature.bg} flex items-center justify-center mb-3`}>
+                  <Icon className={`w-5 h-5 ${feature.color}`} />
                 </div>
-                <h3 className="text-lg font-semibold text-white mb-2">{feature.title}</h3>
-                <p className="text-sm text-slate-400">{feature.desc}</p>
+                <h4 className="text-sm font-semibold text-white mb-1">{feature.title}</h4>
+                <p className="text-xs text-slate-400">{feature.desc}</p>
               </div>
             );
           })}
@@ -279,3 +503,5 @@ export default function App() {
     </div>
   );
 }
+
+
