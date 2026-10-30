@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Database, Table, Key, Link2, Hash, Calendar, ChevronDown, ChevronRight, Copy, Check, Code2, Shield } from 'lucide-react';
+import { Database, Table, Key, Link2, Hash, ChevronRight, Copy, Check, Code2, Shield } from 'lucide-react';
 
 interface Column {
   name: string;
@@ -33,7 +33,12 @@ const tables: TableSchema[] = [
       { name: 'name', type: 'VARCHAR(150)', constraints: ['NOT NULL'], description: 'Nama lengkap koperasi' },
       { name: 'coop_code', type: 'VARCHAR(20)', constraints: ['UNIQUE', 'NOT NULL'], description: "Kode unik koperasi (misal: 'AGR', 'KOPMAJU')" },
       { name: 'legal_entity_number', type: 'VARCHAR(50)', constraints: [], description: 'Nomor badan hukum koperasi' },
-      { name: 'created_at', type: 'TIMESTAMP', constraints: ['DEFAULT CURRENT_TIMESTAMP'], description: 'Waktu pendaftaran koperasi' },
+      { name: 'address', type: 'TEXT', constraints: [], description: 'Alamat lengkap kantor koperasi' },
+      { name: 'phone', type: 'VARCHAR(20)', constraints: [], description: 'Nomor telepon kontak' },
+      { name: 'email', type: 'VARCHAR(100)', constraints: [], description: 'Email kontak koperasi' },
+      { name: 'is_active', type: 'BOOLEAN', constraints: ['DEFAULT TRUE'], description: 'Status aktif/nonaktif' },
+      { name: 'created_at', type: 'TIMESTAMP', constraints: ['DEFAULT CURRENT_TIMESTAMP'], description: 'Waktu pendaftaran' },
+      { name: 'updated_at', type: 'TIMESTAMP', constraints: ['DEFAULT CURRENT_TIMESTAMP'], description: 'Waktu update terakhir' },
     ],
   },
   {
@@ -49,8 +54,16 @@ const tables: TableSchema[] = [
       { name: 'member_id', type: 'VARCHAR(30)', constraints: ['UNIQUE', 'NOT NULL'], description: 'ID Unik Anggota (Primary Login Key)' },
       { name: 'password_hash', type: 'VARCHAR(255)', constraints: ['NOT NULL'], description: 'Hash password (bcrypt/argon2)' },
       { name: 'full_name', type: 'VARCHAR(150)', constraints: ['NOT NULL'], description: 'Nama lengkap pengguna' },
+      { name: 'email', type: 'VARCHAR(100)', constraints: [], description: 'Email pengguna' },
       { name: 'phone', type: 'VARCHAR(20)', constraints: ['UNIQUE'], description: 'Nomor telepon unik' },
+      { name: 'ktp_number', type: 'VARCHAR(20)', constraints: [], description: 'Nomor KTP untuk verifikasi' },
+      { name: 'birth_date', type: 'DATE', constraints: [], description: 'Tanggal lahir' },
+      { name: 'gender', type: 'VARCHAR(10)', constraints: [], description: 'Jenis kelamin: MALE/FEMALE' },
+      { name: 'address', type: 'TEXT', constraints: [], description: 'Alamat lengkap' },
+      { name: 'is_verified', type: 'BOOLEAN', constraints: ['DEFAULT FALSE'], description: 'Status verifikasi KYC' },
+      { name: 'last_login_at', type: 'TIMESTAMP', constraints: [], description: 'Waktu login terakhir' },
       { name: 'created_at', type: 'TIMESTAMP', constraints: ['DEFAULT CURRENT_TIMESTAMP'], description: 'Waktu pembuatan akun' },
+      { name: 'updated_at', type: 'TIMESTAMP', constraints: ['DEFAULT CURRENT_TIMESTAMP'], description: 'Waktu update terakhir' },
     ],
   },
   {
@@ -65,9 +78,14 @@ const tables: TableSchema[] = [
       { name: 'id', type: 'UUID', constraints: ['PRIMARY KEY', 'DEFAULT gen_random_uuid()'], description: 'Primary key keanggotaan' },
       { name: 'user_id', type: 'UUID', constraints: ['FK → users.id', 'ON DELETE CASCADE'], description: 'Referensi ke tabel users' },
       { name: 'cooperative_id', type: 'UUID', constraints: ['FK → cooperatives.id', 'ON DELETE CASCADE'], description: 'Referensi ke tabel cooperatives' },
-      { name: 'role', type: 'VARCHAR(20)', constraints: ["DEFAULT 'MEMBER'"], description: "Peran: 'MEMBER', 'ADMIN', 'MANAGER'" },
+      { name: 'role', type: 'VARCHAR(20)', constraints: ["DEFAULT 'MEMBER'"], description: "Peran: 'MEMBER', 'ADMIN', 'MANAGER', 'CHAIRMAN'" },
+      { name: 'member_number', type: 'VARCHAR(30)', constraints: [], description: 'Nomor anggota internal' },
       { name: 'join_date', type: 'DATE', constraints: ['DEFAULT CURRENT_DATE'], description: 'Tanggal bergabung' },
-      { name: 'status', type: 'VARCHAR(20)', constraints: ["DEFAULT 'ACTIVE'"], description: "Status: 'ACTIVE', 'INACTIVE', dll" },
+      { name: 'status', type: 'VARCHAR(20)', constraints: ["DEFAULT 'ACTIVE'"], description: "Status: 'ACTIVE', 'INACTIVE', 'SUSPENDED', 'PENDING'" },
+      { name: 'approved_by', type: 'UUID', constraints: ['FK → users.id'], description: 'User yang menyetujui' },
+      { name: 'approved_at', type: 'TIMESTAMP', constraints: [], description: 'Waktu persetujuan' },
+      { name: 'created_at', type: 'TIMESTAMP', constraints: ['DEFAULT CURRENT_TIMESTAMP'], description: 'Waktu pembuatan' },
+      { name: 'updated_at', type: 'TIMESTAMP', constraints: ['DEFAULT CURRENT_TIMESTAMP'], description: 'Waktu update' },
     ],
   },
   {
@@ -82,22 +100,61 @@ const tables: TableSchema[] = [
       { name: 'cooperative_id', type: 'UUID', constraints: ['PRIMARY KEY', 'FK → cooperatives.id', 'ON DELETE CASCADE'], description: 'Primary key & referensi ke koperasi' },
       { name: 'current_year', type: 'INT', constraints: ['NOT NULL'], description: 'Tahun berjalan untuk penomoran' },
       { name: 'current_sequence', type: 'INT', constraints: ['NOT NULL', 'DEFAULT 0'], description: 'Nomor urut terakhir (Pessimistic Locking)' },
+      { name: 'last_reset_at', type: 'TIMESTAMP', constraints: ['DEFAULT CURRENT_TIMESTAMP'], description: 'Waktu reset terakhir' },
+      { name: 'updated_at', type: 'TIMESTAMP', constraints: ['DEFAULT CURRENT_TIMESTAMP'], description: 'Waktu update terakhir' },
     ],
   },
   {
     id: 'savings',
     name: 'savings',
     number: 5,
-    description: 'Tabel Simpanan — Ledger sederhana untuk mencatat saldo simpanan anggota.',
+    description: 'Tabel Simpanan — Ledger untuk mencatat saldo simpanan anggota.',
     icon: '💰',
     color: 'text-rose-400',
     gradient: 'from-rose-500 to-pink-500',
     columns: [
       { name: 'id', type: 'UUID', constraints: ['PRIMARY KEY', 'DEFAULT gen_random_uuid()'], description: 'Primary key simpanan' },
-      { name: 'membership_id', type: 'UUID', constraints: ['FK → memberships.id'], description: 'Referensi ke keanggotaan' },
+      { name: 'membership_id', type: 'UUID', constraints: ['FK → memberships.id', 'ON DELETE CASCADE'], description: 'Referensi ke keanggotaan' },
       { name: 'type', type: 'VARCHAR(20)', constraints: ['NOT NULL'], description: "Jenis: 'POKOK', 'WAJIB', 'SUKARELA'" },
-      { name: 'balance', type: 'NUMERIC(15,2)', constraints: ['DEFAULT 0.00'], description: 'Saldo simpanan' },
-      { name: 'updated_at', type: 'TIMESTAMP', constraints: ['DEFAULT CURRENT_TIMESTAMP'], description: 'Waktu terakhir diupdate' },
+      { name: 'balance', type: 'NUMERIC(15,2)', constraints: ['NOT NULL', 'DEFAULT 0.00'], description: 'Saldo simpanan' },
+      { name: 'currency', type: 'VARCHAR(3)', constraints: ["DEFAULT 'IDR'"], description: 'Kode mata uang' },
+      { name: 'last_transaction_at', type: 'TIMESTAMP', constraints: [], description: 'Waktu transaksi terakhir' },
+      { name: 'created_at', type: 'TIMESTAMP', constraints: ['DEFAULT CURRENT_TIMESTAMP'], description: 'Waktu pembuatan' },
+      { name: 'updated_at', type: 'TIMESTAMP', constraints: ['DEFAULT CURRENT_TIMESTAMP'], description: 'Waktu update' },
+    ],
+  },
+  {
+    id: 'loans',
+    name: 'loans',
+    number: 6,
+    description: 'Tabel Pinjaman — Tracking pinjaman anggota dengan berbagai jenis.',
+    icon: '🏦',
+    color: 'text-indigo-400',
+    gradient: 'from-indigo-500 to-blue-500',
+    columns: [
+      { name: 'id', type: 'UUID', constraints: ['PRIMARY KEY', 'DEFAULT gen_random_uuid()'], description: 'Primary key pinjaman' },
+      { name: 'membership_id', type: 'UUID', constraints: ['FK → memberships.id', 'ON DELETE CASCADE'], description: 'Referensi ke peminjam' },
+      { name: 'loan_number', type: 'VARCHAR(30)', constraints: ['UNIQUE', 'NOT NULL'], description: 'Nomor pinjaman unik' },
+      { name: 'type', type: 'VARCHAR(20)', constraints: ['NOT NULL'], description: "Jenis: 'MODAL_USAHA', 'DARURAT', 'PAYLATER', 'MIKRO'" },
+      { name: 'principal_amount', type: 'NUMERIC(15,2)', constraints: ['NOT NULL'], description: 'Jumlah pokok pinjaman' },
+      { name: 'remaining_amount', type: 'NUMERIC(15,2)', constraints: ['NOT NULL'], description: 'Sisa pinjaman' },
+      { name: 'interest_rate', type: 'NUMERIC(5,2)', constraints: ['NOT NULL', 'DEFAULT 0.00'], description: 'Suku bunga per bulan (%)' },
+      { name: 'interest_type', type: 'VARCHAR(10)', constraints: ["DEFAULT 'FLAT'"], description: "Metode: 'FLAT', 'EFFECTIVE', 'ANNUITY'" },
+      { name: 'total_installments', type: 'INT', constraints: ['NOT NULL'], description: 'Total jumlah angsuran' },
+      { name: 'paid_installments', type: 'INT', constraints: ['NOT NULL', 'DEFAULT 0'], description: 'Angsuran yang sudah dibayar' },
+      { name: 'installment_amount', type: 'NUMERIC(15,2)', constraints: ['NOT NULL'], description: 'Jumlah angsuran per bulan' },
+      { name: 'applied_date', type: 'DATE', constraints: ['NOT NULL', 'DEFAULT CURRENT_DATE'], description: 'Tanggal pengajuan' },
+      { name: 'approved_date', type: 'DATE', constraints: [], description: 'Tanggal persetujuan' },
+      { name: 'disbursement_date', type: 'DATE', constraints: [], description: 'Tanggal pencairan' },
+      { name: 'due_date', type: 'DATE', constraints: ['NOT NULL'], description: 'Jatuh tempo terakhir' },
+      { name: 'next_payment_date', type: 'DATE', constraints: [], description: 'Jatuh tempo angsuran berikutnya' },
+      { name: 'status', type: 'VARCHAR(20)', constraints: ["DEFAULT 'PENDING'"], description: "Status: 'PENDING', 'VERIFIED', 'APPROVED', 'DISBURSED', 'COMPLETED', 'OVERDUE', 'CANCELLED'" },
+      { name: 'collateral_description', type: 'TEXT', constraints: [], description: 'Deskripsi jaminan' },
+      { name: 'purpose', type: 'TEXT', constraints: [], description: 'Tujuan pinjaman' },
+      { name: 'approved_by', type: 'UUID', constraints: ['FK → users.id'], description: 'User yang menyetujui' },
+      { name: 'notes', type: 'TEXT', constraints: [], description: 'Catatan tambahan' },
+      { name: 'created_at', type: 'TIMESTAMP', constraints: ['DEFAULT CURRENT_TIMESTAMP'], description: 'Waktu pembuatan' },
+      { name: 'updated_at', type: 'TIMESTAMP', constraints: ['DEFAULT CURRENT_TIMESTAMP'], description: 'Waktu update' },
     ],
   },
 ];
@@ -107,15 +164,26 @@ const relations = [
   { from: 'cooperatives', to: 'memberships', label: '1:N', type: 'one-to-many' },
   { from: 'cooperatives', to: 'id_sequences', label: '1:1', type: 'one-to-one' },
   { from: 'memberships', to: 'savings', label: '1:N', type: 'one-to-many' },
+  { from: 'memberships', to: 'loans', label: '1:N', type: 'one-to-many' },
 ];
 
-const sqlScript = `-- 1. Tabel Koperasi
+const sqlScript = `-- ============================================================================
+-- MIGRATION SCRIPT: Sistem Manajemen Koperasi Multi-Tenant
+-- Database: PostgreSQL 14+
+-- ============================================================================
+
+-- 1. Tabel Koperasi
 CREATE TABLE cooperatives (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(150) NOT NULL,
     coop_code VARCHAR(20) UNIQUE NOT NULL,
     legal_entity_number VARCHAR(50),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    address TEXT,
+    phone VARCHAR(20),
+    email VARCHAR(100),
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- 2. Tabel Pengguna Global
@@ -124,35 +192,85 @@ CREATE TABLE users (
     member_id VARCHAR(30) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
     full_name VARCHAR(150) NOT NULL,
+    email VARCHAR(100),
     phone VARCHAR(20) UNIQUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ktp_number VARCHAR(20),
+    birth_date DATE,
+    gender VARCHAR(10),
+    address TEXT,
+    profile_photo_url TEXT,
+    is_verified BOOLEAN DEFAULT FALSE,
+    last_login_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- 3. Tabel Keanggotaan
 CREATE TABLE memberships (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-    cooperative_id UUID REFERENCES cooperatives(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    cooperative_id UUID NOT NULL REFERENCES cooperatives(id) ON DELETE CASCADE,
     role VARCHAR(20) DEFAULT 'MEMBER',
+    member_number VARCHAR(30),
     join_date DATE DEFAULT CURRENT_DATE,
     status VARCHAR(20) DEFAULT 'ACTIVE',
-    UNIQUE(user_id, cooperative_id)
+    approved_by UUID REFERENCES users(id),
+    approved_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_user_cooperative UNIQUE (user_id, cooperative_id)
 );
 
 -- 4. Tabel Antrian ID
 CREATE TABLE id_sequences (
     cooperative_id UUID PRIMARY KEY REFERENCES cooperatives(id) ON DELETE CASCADE,
-    current_year INT NOT NULL,
-    current_sequence INT NOT NULL DEFAULT 0
+    current_year INT NOT NULL DEFAULT EXTRACT(YEAR FROM CURRENT_DATE),
+    current_sequence INT NOT NULL DEFAULT 0,
+    last_reset_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- 5. Tabel Simpanan
 CREATE TABLE savings (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    membership_id UUID REFERENCES memberships(id),
+    membership_id UUID NOT NULL REFERENCES memberships(id) ON DELETE CASCADE,
     type VARCHAR(20) NOT NULL,
-    balance NUMERIC(15,2) DEFAULT 0.00,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    balance NUMERIC(15,2) NOT NULL DEFAULT 0.00,
+    currency VARCHAR(3) DEFAULT 'IDR',
+    last_transaction_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_membership_type UNIQUE (membership_id, type),
+    CONSTRAINT chk_balance_positive CHECK (balance >= 0)
+);
+
+-- 6. Tabel Pinjaman
+CREATE TABLE loans (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    membership_id UUID NOT NULL REFERENCES memberships(id) ON DELETE CASCADE,
+    loan_number VARCHAR(30) UNIQUE NOT NULL,
+    type VARCHAR(20) NOT NULL,
+    principal_amount NUMERIC(15,2) NOT NULL,
+    remaining_amount NUMERIC(15,2) NOT NULL,
+    interest_rate NUMERIC(5,2) NOT NULL DEFAULT 0.00,
+    interest_type VARCHAR(10) DEFAULT 'FLAT',
+    total_installments INT NOT NULL,
+    paid_installments INT NOT NULL DEFAULT 0,
+    installment_amount NUMERIC(15,2) NOT NULL,
+    applied_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    approved_date DATE,
+    disbursement_date DATE,
+    due_date DATE NOT NULL,
+    next_payment_date DATE,
+    status VARCHAR(20) DEFAULT 'PENDING',
+    collateral_description TEXT,
+    purpose TEXT,
+    approved_by UUID REFERENCES users(id),
+    notes TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_principal_positive CHECK (principal_amount > 0),
+    CONSTRAINT chk_remaining_valid CHECK (remaining_amount >= 0 AND remaining_amount <= principal_amount)
 );`;
 
 function highlightSQL(code: string): string {
@@ -164,7 +282,7 @@ function highlightSQL(code: string): string {
   highlighted = highlighted.replace(/(--.*$)/gm, '<span class="text-slate-500 italic">$1</span>');
   highlighted = highlighted.replace(/('[^']*')/g, '<span class="text-emerald-400">$1</span>');
 
-  const keywords = ['CREATE', 'TABLE', 'UUID', 'PRIMARY', 'KEY', 'DEFAULT', 'NOT', 'NULL', 'UNIQUE', 'REFERENCES', 'ON', 'DELETE', 'CASCADE', 'VARCHAR', 'INT', 'TIMESTAMP', 'DATE', 'NUMERIC', 'CURRENT_TIMESTAMP', 'CURRENT_DATE', 'gen_random_uuid'];
+  const keywords = ['CREATE', 'TABLE', 'UUID', 'PRIMARY', 'KEY', 'DEFAULT', 'NOT', 'NULL', 'UNIQUE', 'REFERENCES', 'ON', 'DELETE', 'CASCADE', 'VARCHAR', 'INT', 'TIMESTAMP', 'DATE', 'NUMERIC', 'BOOLEAN', 'TEXT', 'CHECK', 'CONSTRAINT', 'CURRENT_TIMESTAMP', 'CURRENT_DATE', 'gen_random_uuid', 'EXTRACT', 'YEAR', 'FROM'];
   keywords.forEach(kw => {
     const regex = new RegExp(`\\b(${kw})\\b`, 'g');
     highlighted = highlighted.replace(regex, '<span class="text-purple-400 font-semibold">$1</span>');
@@ -213,7 +331,7 @@ export default function App() {
             Skema Database Koperasi
           </h1>
           <p className="text-xl text-slate-300 max-w-3xl mx-auto">
-            PostgreSQL Schema dengan 5 Tabel Utama untuk Sistem Manajemen Koperasi Multi-Tenant
+            PostgreSQL Schema dengan 6 Tabel Utama untuk Sistem Manajemen Koperasi Multi-Tenant
           </p>
         </div>
 
@@ -240,7 +358,7 @@ export default function App() {
         <div className="mb-12">
           <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-2">
             <Table className="w-6 h-6 text-amber-400" />
-            5 Tabel Utama
+            6 Tabel Utama
           </h2>
 
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -413,7 +531,7 @@ export default function App() {
         <div className="mb-12">
           <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-2">
             <Code2 className="w-6 h-6 text-emerald-400" />
-            SQL Script
+            SQL Migration Script
           </h2>
 
           <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
@@ -422,7 +540,7 @@ export default function App() {
                 <span className="w-3 h-3 rounded-full bg-red-500/60" />
                 <span className="w-3 h-3 rounded-full bg-amber-500/60" />
                 <span className="w-3 h-3 rounded-full bg-emerald-500/60" />
-                <span className="text-xs text-slate-500 ml-2 font-mono">schema.sql</span>
+                <span className="text-xs text-slate-500 ml-2 font-mono">migration.sql</span>
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -461,7 +579,7 @@ export default function App() {
               <div className="p-8 text-center">
                 <Database className="w-12 h-12 text-amber-400/50 mx-auto mb-3" />
                 <p className="text-sm text-slate-400 mb-4">
-                  Full SQL script untuk membuat 5 tabel database koperasi
+                  Full SQL migration script untuk membuat 6 tabel database koperasi
                 </p>
                 <button
                   onClick={() => setShowSQL(true)}
@@ -479,7 +597,7 @@ export default function App() {
           {[
             { icon: Key, title: 'UUID Primary Key', desc: 'gen_random_uuid() untuk setiap tabel', color: 'text-amber-400', bg: 'bg-amber-500/10' },
             { icon: Link2, title: 'Foreign Key + CASCADE', desc: 'Referential integrity dengan cascade delete', color: 'text-blue-400', bg: 'bg-blue-500/10' },
-            { icon: Shield, title: 'UNIQUE Constraints', desc: 'Mencegah duplikasi data kritis', color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
+            { icon: Shield, title: 'UNIQUE Constraints', desc: 'member_id & (user_id, cooperative_id)', color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
             { icon: Hash, title: 'NUMERIC Precision', desc: 'NUMERIC(15,2) untuk akurasi keuangan', color: 'text-purple-400', bg: 'bg-purple-500/10' },
           ].map((feature) => {
             const Icon = feature.icon;
@@ -503,5 +621,3 @@ export default function App() {
     </div>
   );
 }
-
-
