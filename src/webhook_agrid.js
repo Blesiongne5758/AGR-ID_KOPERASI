@@ -1,0 +1,341 @@
+// ============================================================================
+// Webhook Endpoint: AGRID Order Processing
+// Integration Engineer Implementation - Production Ready
+// ============================================================================
+// POST /api/v1/webhooks/agrid-order
+// - Verifikasi HMAC SHA256 signature dari AGRID
+// - Idempotency check untuk mencegah duplicate processing
+// - Database transaction untuk konsistensi data
+// - Update Paylater limit atau catat pembayaran angsuran
+// ============================================================================
+
+const express = require('express');
+const crypto = require('crypto');
+const { Pool } = require('pg');
+
+const router = express.Router();
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  max: 20,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000,
+});
+
+// Webhook Configuration
+const WEBHOOK_SECRET = process.env.AGRID_WEBHOOK_SECRET;
+const WEBHOOK_TOLERANCE_SECONDS = 300; // 5 minutes
+
+// Custom Error Classes
+class WebhookError extends Error {
+  constructor(message, statusCode = 400) {
+    super(message);
+    this.statusCode = statusCode;
+    this.isOperational = true;
+  }
+}
+
+// ============================================================================
+// Signature Verification (HMAC SHA256)
+// ============================================================================
+function verifySignature(payload, signature, timestamp) {
+  if (!signature || !timestamp) {
+    throw new WebhookError('Missing signature or timestamp header', 401);
+  }
+
+  // Check timestamp tolerance (prevent replay attacks)
+  const now = Math.floor(Date.now() / 1000);
+  const webhookTime = parseInt(timestamp, 10);
+
+  if (Math.abs(now - webhookTime) > WEBHOOK_TOLERANCE_SECONDS) {
+    throw new WebhookError('Webhook timestamp expired', 401);
+  }
+
+  // Create signed payload: timestamp + body
+  const signedPayload = `${timestamp}.${JSON.stringify(payload)}`;
+
+  // Generate expected HMAC SHA256 signature
+  const expectedSignature = crypto
+    .createHmac('sha256', WEBHOOK_SECRET)
+    .update(signedPayload)
+    .digest('hex');
+
+  // Timing-safe comparison (prevent timing attacks)
+  try {
+    const isValid = crypto.timingSafeEqual(
+      Buffer.from(signature, 'hex'),
+      Buffer.from(expectedSignature, 'hex')
+    );
+
+    if (!isValid) {
+      throw new WebhookError('Invalid webhook signature', 401);
+    }
+  } catch (error) {
+    if (error instanceof WebhookError) throw error;
+    throw new WebhookError('Invalid webhook signature format', 401);
+  }
+
+  return true;
+}
+
+// ============================================================================
+// POST /api/v1/webhooks/agrid-order
+// ============================================================================
+router.post('/agrid-order', async (req, res, next) => {
+  const startTime = Date.now();
+
+  try {
+    // Step 1: Extract headers
+    const signature = req.headers['x-agrid-signature'];
+    const timestamp = req.headers['x-agrid-timestamp'];
+    const eventId = req.headers['x-agrid-event-id'] || req.body.event_id;
+
+    // Step 2: Verify signature
+    verifySignature(req.body, signature, timestamp);
+
+    // Step 3: Extract and validate payload
+    const { member_id, cooperative_id, order_amount, status, order_id } = req.body;
+
+    if (!member_id || !cooperative_id || !order_amount || !status) {
+      throw new WebhookError('Missing required fields in payload');
+    }
+
+    if (typeof order_amount !== 'number' || order_amount <= 0) {
+      throw new WebhookError('Invalid order_amount');
+    }
+
+    // Step 4: Idempotency check (prevent duplicate processing)
+    const idempotencyCheck = await pool.query(
+      `SELECT id FROM agrid_webhook_logs
+       WHERE agrid_event_id = $1 AND status = 'SUCCESS'`,
+      [eventId]
+    );
+
+    if (idempotencyCheck.rows.length > 0) {
+      return res.status(200).json({
+        success: true,
+        message: 'Event already processed',
+        data: { webhook_id: idempotencyCheck.rows[0].id },
+      });
+    }
+
+    // Step 5: Log webhook receipt (PENDING status)
+    const webhookLog = await pool.query(
+      `INSERT INTO agrid_webhook_logs (
+        id, agrid_event_id, cooperative_id, event_type,
+        payload, signature, status
+      ) VALUES ($1, $2, $3, $4, $5, $6, 'PENDING')
+      RETURNING id`,
+      [
+        crypto.randomUUID(),
+        eventId,
+        cooperative_id,
+        'ORDER.PAID',
+        JSON.stringify(req.body),
+        signature,
+      ]
+    );
+
+    const webhookLogId = webhookLog.rows[0].id;
+
+    // Step 6: Process with database transaction
+    const client = await pool.connect();
+
+    try {
+      await client.query('BEGIN');
+
+      // Step 6.1: Find membership with FOR UPDATE lock
+      const membershipQuery = `
+        SELECT
+          m.id AS membership_id,
+          m.user_id,
+          m.cooperative_id,
+          u.full_name
+        FROM memberships m
+        INNER JOIN users u ON m.user_id = u.id
+        WHERE u.member_id = $1
+          AND m.cooperative_id = $2
+          AND m.status = 'ACTIVE'
+        FOR UPDATE
+      `;
+
+      const membershipResult = await client.query(membershipQuery, [
+        member_id,
+        cooperative_id,
+      ]);
+
+      if (membershipResult.rows.length === 0) {
+        throw new WebhookError('Membership not found or inactive', 404);
+      }
+
+      const membership = membershipResult.rows[0];
+
+      // Step 6.2: Process based on status
+      if (status === 'PAID') {
+        // Try to find active Paylater loan
+        const paylaterLoanQuery = `
+          SELECT
+            l.id AS loan_id,
+            l.remaining_amount,
+            l.total_installments,
+            l.paid_installments,
+            l.installment_amount
+          FROM loans l
+          WHERE l.membership_id = $1
+            AND l.type = 'PAYLATER'
+            AND l.status IN ('DISBURSED', 'OVERDUE')
+            AND l.remaining_amount > 0
+          ORDER BY l.applied_date DESC
+          LIMIT 1
+          FOR UPDATE
+        `;
+
+        const loanResult = await client.query(paylaterLoanQuery, [
+          membership.membership_id,
+        ]);
+
+        if (loanResult.rows.length > 0) {
+          // Option A: Reduce Paylater limit
+          const loan = loanResult.rows[0];
+          const newRemaining = loan.remaining_amount - order_amount;
+
+          if (newRemaining < 0) {
+            throw new WebhookError(
+              'Payment amount exceeds remaining loan balance',
+              409
+            );
+          }
+
+          // Update loan remaining amount
+          await client.query(
+            `UPDATE loans
+             SET remaining_amount = $1,
+                 updated_at = NOW()
+             WHERE id = $2`,
+            [newRemaining, loan.loan_id]
+          );
+
+          // Check if loan is fully paid
+          const newStatus = newRemaining === 0 ? 'COMPLETED' : 'DISBURSED';
+          await client.query(
+            `UPDATE loans
+             SET status = $1, updated_at = NOW()
+             WHERE id = $2`,
+            [newStatus, loan.loan_id]
+          );
+
+          // Record transaction in ledger
+          await client.query(
+            `INSERT INTO savings_transactions (
+              savings_id, transaction_type, amount,
+              balance_before, balance_after, description,
+              reference_number
+            ) VALUES (
+              (SELECT id FROM savings
+               WHERE membership_id = $1 AND type = 'SUKARELA'
+               LIMIT 1),
+              'LOAN_PAYMENT',
+              $2,
+              $3,
+              $4,
+              $5,
+              $6
+            )`,
+            [
+              membership.membership_id,
+              order_amount,
+              loan.remaining_amount,
+              newRemaining,
+              `Pembayaran Paylater AGRID Order ${order_id}`,
+              order_id,
+            ]
+          );
+        } else {
+          // Option B: No active Paylater loan, record as regular payment
+          await client.query(
+            `INSERT INTO savings_transactions (
+              savings_id, transaction_type, amount,
+              balance_before, balance_after, description,
+              reference_number
+            ) VALUES (
+              (SELECT id FROM savings
+               WHERE membership_id = $1 AND type = 'SUKARELA'
+               LIMIT 1),
+              'DEPOSIT',
+              $2,
+              0,
+              $2,
+              $3,
+              $4
+            )`,
+            [
+              membership.membership_id,
+              order_amount,
+              `Pembayaran AGRID Order ${order_id}`,
+              order_id,
+            ]
+          );
+        }
+      }
+
+      // Step 6.3: Update webhook log status
+      await client.query(
+        `UPDATE agrid_webhook_logs
+         SET status = 'SUCCESS',
+             processed_at = NOW()
+         WHERE id = $1`,
+        [webhookLogId]
+      );
+
+      // Commit transaction
+      await client.query('COMMIT');
+
+      const processingTime = Date.now() - startTime;
+
+      res.status(200).json({
+        success: true,
+        message: 'Webhook processed successfully',
+        data: {
+          webhook_id: webhookLogId,
+          membership_id: membership.membership_id,
+          order_id: order_id,
+          amount_processed: order_amount,
+          processing_time_ms: processingTime,
+        },
+      });
+    } catch (dbError) {
+      await client.query('ROLLBACK');
+
+      // Update webhook log with error
+      await pool.query(
+        `UPDATE agrid_webhook_logs
+         SET status = 'FAILED',
+             error_message = $1,
+             processed_at = NOW()
+         WHERE id = $2`,
+        [dbError.message, webhookLogId]
+      );
+
+      throw dbError;
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    console.error('[Webhook Error]', {
+      message: error.message,
+      statusCode: error.statusCode,
+      stack: error.stack,
+    });
+
+    const statusCode = error.statusCode || 500;
+    const message = error.isOperational
+      ? error.message
+      : 'Internal webhook processing error';
+
+    res.status(statusCode).json({
+      success: false,
+      message,
+    });
+  }
+});
+
+module.exports = router;
