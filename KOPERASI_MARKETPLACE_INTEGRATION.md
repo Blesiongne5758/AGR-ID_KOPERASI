@@ -1,56 +1,38 @@
-# Integrasi registri anggota KOPERASI → AGR-ID
+# Integrasi anggota KOPERASI → AGR-ID Marketplace
 
-Repo `Blesiongne5758/AGR-ID_KOPERASI` saat ditinjau hanya memiliki README, tanpa kode aplikasi, API, atau skema registri. Karena itu AGR-ID kini menyediakan endpoint penerima sinkronisasi; implementasi KOPERASI perlu mengirim data resmi ke endpoint ini agar pengguna dapat dipastikan sebagai anggota terdaftar.
+Integrasi ini menyinkronkan direktori koperasi dan roster anggota resmi dari database KOPERASI ke AGR-ID. Pengguna marketplace memilih koperasi, memasukkan nomor dan nama anggota, lalu status keanggotaannya dicocokkan dengan roster. Data contoh di UI KOPERASI tidak dipakai sebagai sumber sinkronisasi.
 
-## Endpoint AGR-ID
+## Alur pengguna
 
-`POST /api/v1/cooperatives/sync`
+1. Pengguna masuk ke AGR-ID dan membuka Pengaturan Akun → Keanggotaan Koperasi.
+2. Pengguna memilih koperasi yang aktif dari direktori AGR-ID, lalu memasukkan nomor anggota dan nama sesuai catatan koperasi.
+3. AGR-ID menandai anggota sebagai terdaftar jika nomor dan nama cocok dengan roster terbaru. Jika belum cocok, pengajuan masuk ke Dashboard Admin AGR-ID untuk diperiksa.
+4. Koperasi nonaktif atau anggota yang tidak aktif pada snapshot tidak dapat diverifikasi sebagai anggota aktif.
 
-Autentikasi memakai `Authorization: Bearer <token>` dengan API token berperan `koperasi` yang dibuat dari panel Direktori Koperasi di Dashboard Admin AGR-ID. Token ini hanya diizinkan mengakses endpoint sinkronisasi. Simpan hanya di secret manager/environment KOPERASI, dan jangan memakai GitHub PAT sebagai token runtime.
+## Pengirim di KOPERASI
 
-```json
-{
-  "snapshot": true,
-  "cooperatives": [
-    {
-      "id": "koperasi-001",
-      "code": "KOP-001",
-      "name": "Koperasi Tani Sejahtera",
-      "active": true,
-      "members": [
-        {
-          "id": "anggota-001",
-          "number": "A-1001",
-          "name": "Nama sesuai buku anggota",
-          "email": "anggota@example.id",
-          "active": true
-        }
-      ]
-    }
-  ]
-}
+```
+server/agrid-sync.mjs
+npm run sync:agrid
 ```
 
-`snapshot: true` menandakan roster lengkap untuk tiap koperasi yang dikirim. Anggota aktif yang tidak ada pada snapshot koperasi tersebut dinonaktifkan untuk pencocokan baru. Untuk update parsial gunakan `snapshot: false`; set `active: false` untuk menonaktifkan data tertentu.
+Job mengambil semua baris `cooperatives` dan `memberships` beserta nama pengguna dari Supabase. Nomor anggota menggunakan `memberships.member_number` dan fallback ke `users.member_id`. ID keanggotaan menjadi ID eksternal anggota. Email, nomor telepon, password, data simpanan, serta data pinjaman tidak dikirim.
 
-AGR-ID mencocokkan nomor anggota dengan nama terdaftar atau email akun marketplace. Cocok langsung menjadi status `terdaftar`; ketidakcocokan masuk ke antrean verifikasi admin. Data identitas dikirim melalui HTTPS, dibatasi ke kebutuhan sinkronisasi, dan tidak dicatat ke log.
+Siapkan variabel berikut hanya di secret manager/server KOPERASI:
 
-```json
-{
-  "ok": true,
-  "cooperatives_synced": 1,
-  "members_synced": 1,
-  "snapshot": true
-}
-```
+- `SUPABASE_URL` — URL proyek KOPERASI.
+- `SUPABASE_SERVICE_ROLE_KEY` — akses server ke tabel; jangan pernah masukkan ke frontend.
+- `AGRID_BASE_URL` — URL deployment AGR-ID.
+- `AGRID_API_TOKEN` — token integrasi ber-role `koperasi` yang dibuat di Dashboard Admin AGR-ID.
 
-## Implementasi yang sudah ada di AGR-ID
+Jalankan sinkronisasi manual dengan `npm run sync:agrid`. Untuk sinkron harian, atur scheduler pada host KOPERASI ke pukul 02.00 WIB (`0 2 * * *`). Job memakai HTTPS, timeout 30 detik, maksimal tiga percobaan, dan tidak mencatat payload atau token ke log. Jangan gunakan GitHub PAT sebagai kredensial API runtime.
 
-- Direktori `koperasi` dan roster `koperasi_anggota` menerima sumber resmi melalui endpoint sinkronisasi.
-- Pengguna memilih koperasi di Pengaturan Pengguna, memasukkan nomor dan nama anggota, lalu mendapat status terdaftar otomatis saat datanya cocok.
-- Pengajuan yang belum cocok muncul di Dashboard Admin untuk pemeriksaan manual.
-- Migrasi Supabase `0009_cooperative_membership.sql` membuat tabel direktori, roster, dan tautan akun.
+`snapshot: true` mengirim semua koperasi dan keanggotaan, termasuk status tidak aktif, agar AGR-ID dapat memperbarui roster keseluruhan. Snapshot kosong ditolak agar kesalahan konfigurasi tidak mengirim daftar kosong.
 
-## Berikutnya di repo KOPERASI
+## Penerima di AGR-ID
 
-Tambahkan job sinkronisasi yang membaca daftar koperasi dan roster resmi, membentuk payload di atas, lalu mengirimkannya berkala dengan token integrasi yang tersimpan sebagai secret. Repo KOPERASI belum memiliki sumber data atau stack aplikasi yang dapat dijadikan implementasi job tersebut.
+`POST /api/v1/cooperatives/sync` menerima Bearer token dengan role `koperasi`. Token itu dibatasi ke endpoint sinkronisasi. AGR-ID menyimpan direktori koperasi, roster resmi, dan tautan akun anggota. Migrasi tabel marketplace ada pada `supabase/migrations/0009_cooperative_membership.sql`; endpoint dan alur akun berada di perubahan lokal AGR-ID.
+
+## Batasan operasional
+
+Sinkronisasi ini menghubungkan identitas dan status anggota untuk pemilihan koperasi pada marketplace. Ia tidak menyinkronkan katalog produk, stok, pesanan, saldo, atau pembayaran. Setelah deployment AGR-ID dan secrets KOPERASI dikonfigurasi, admin harus menjalankan sinkron pertama dan memastikan respons sukses sebelum anggota menggunakan pencocokan otomatis.
