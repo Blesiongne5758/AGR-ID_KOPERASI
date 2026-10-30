@@ -6,6 +6,7 @@ import {
   CircleDollarSign, 
   Link2, 
   Settings,
+  RefreshCw,
   ChevronLeft,
   ChevronRight,
   X,
@@ -36,6 +37,7 @@ export default function Sidebar({ activeMenu, onMenuChange, coopName, coopCode }
     { id: 'savings', label: 'Simpanan', icon: Wallet },
     { id: 'loans', label: 'Pinjaman', icon: CircleDollarSign, badge: 12 },
     { id: 'agrid', label: 'Integrasi AGRID', icon: Link2 },
+    { id: 'sync', label: 'Sync AGR-ID', icon: RefreshCw },
     { id: 'settings', label: 'Pengaturan', icon: Settings },
   ];
 
