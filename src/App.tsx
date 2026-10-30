@@ -1,120 +1,152 @@
 import { useState } from 'react';
-import {
-  Webhook,
-  Shield,
-  Database,
-  Lock,
-  ArrowRight,
-  Zap,
-  AlertTriangle,
-  Copy,
-  Check,
-  CheckCircle2,
-  XCircle,
-  RefreshCw,
-} from 'lucide-react';
+import { Calculator, Calendar, TrendingUp, Database, Copy, Check, Code2 } from 'lucide-react';
 
-const webhookCode = `// POST /api/v1/webhooks/agrid-order
-router.post('/agrid-order', async (req, res) => {
-  try {
-    // Step 1: Extract headers
-    const signature = req.headers['x-agrid-signature'];
-    const timestamp = req.headers['x-agrid-timestamp'];
-    const eventId = req.headers['x-agrid-event-id'];
+const goCode = `package usecase
 
-    // Step 2: Verify signature (HMAC SHA256)
-    verifySignature(req.body, signature, timestamp);
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"math"
+	"time"
 
-    // Step 3: Extract payload
-    const { member_id, cooperative_id, order_amount, status } = req.body;
+	"github.com/google/uuid"
+)
 
-    // Step 4: Idempotency check
-    const existing = await pool.query(
-      'SELECT id FROM agrid_webhook_logs WHERE agrid_event_id = $1',
-      [eventId]
-    );
-    if (existing.rows.length > 0) {
-      return res.json({ success: true, message: 'Already processed' });
+type LoanSchedule struct {
+	ID             uuid.UUID
+	LoanID         uuid.UUID
+	InstallmentNo  int
+	DueDate        time.Time
+	PrincipalDue   float64
+	InterestDue    float64
+	TotalDue       float64
+	RemainingBal   float64
+	Status         string
+}
+
+func CalculateAndInsertAnnuitySchedule(
+	ctx context.Context, 
+	tx *sql.Tx, 
+	loanID uuid.UUID, 
+	principal float64, 
+	annualRatePercent float64, 
+	months int, 
+	startDate time.Time,
+) error {
+	// 1. Konversi bunga tahunan ke bulanan
+	monthlyRate := (annualRatePercent / 100) / 12
+
+	// 2. Hitung Cicilan Tetap (Annuity Payment)
+	// Rumus: A = P * [ r(1+r)^n ] / [ (1+r)^n - 1 ]
+	numerator := monthlyRate * math.Pow(1+monthlyRate, float64(months))
+	denominator := math.Pow(1+monthlyRate, float64(months)) - 1
+	fixedPayment := principal * (numerator / denominator)
+
+	// Pembulatan ke 2 desimal (Rupiah)
+	fixedPayment = math.Round(fixedPayment*100) / 100
+
+	remainingBalance := principal
+	currentDate := startDate
+
+	// 3. Looping untuk membuat jadwal per bulan
+	for i := 1; i <= months; i++ {
+		// Hitung bunga bulan ini
+		interestDue := math.Round(remainingBalance*monthlyRate*100) / 100
+		
+		// Hitung pokok bulan ini
+		principalDue := fixedPayment - interestDue
+
+		// PENTING: Penyesuaian Bulan Terakhir
+		if i == months {
+			principalDue = remainingBalance
+			fixedPayment = principalDue + interestDue
+		}
+
+		// Update sisa saldo
+		remainingBalance -= principalDue
+		if remainingBalance < 0 {
+			remainingBalance = 0
+		}
+
+		// Tambah 1 bulan untuk jatuh tempo
+		currentDate = currentDate.AddDate(0, 1, 0)
+
+		// 4. Insert ke Database
+		query := \`
+			INSERT INTO loan_schedules 
+			(id, loan_id, installment_number, due_date, 
+			 principal_due, interest_due, total_due, 
+			 remaining_balance, status)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'UPCOMING')
+		\`
+		_, err := tx.ExecContext(ctx, query, 
+			uuid.New(), loanID, i, currentDate, 
+			principalDue, interestDue, fixedPayment, remainingBalance,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to insert schedule month %d: %w", i, err)
+		}
+	}
+
+	return nil
+}`;
+
+interface ScheduleRow {
+  month: number;
+  dueDate: string;
+  principal: number;
+  interest: number;
+  total: number;
+  remaining: number;
+}
+
+function calculateAnnuity(
+  principal: number,
+  annualRate: number,
+  months: number,
+  startDate: Date
+): { fixedPayment: number; schedule: ScheduleRow[] } {
+  const monthlyRate = (annualRate / 100) / 12;
+  
+  const numerator = monthlyRate * Math.pow(1 + monthlyRate, months);
+  const denominator = Math.pow(1 + monthlyRate, months) - 1;
+  let fixedPayment = principal * (numerator / denominator);
+  
+  fixedPayment = Math.round(fixedPayment * 100) / 100;
+  
+  let remainingBalance = principal;
+  const schedule: ScheduleRow[] = [];
+  const currentDate = new Date(startDate);
+  
+  for (let i = 1; i <= months; i++) {
+    currentDate.setMonth(currentDate.getMonth() + 1);
+    
+    let interestDue = Math.round(remainingBalance * monthlyRate * 100) / 100;
+    let principalDue = fixedPayment - interestDue;
+    
+    if (i === months) {
+      principalDue = remainingBalance;
+      fixedPayment = principalDue + interestDue;
     }
-
-    // Step 5: Log webhook (PENDING)
-    await pool.query(
-      \`INSERT INTO agrid_webhook_logs
-       (id, agrid_event_id, cooperative_id, event_type,
-        payload, signature, status)
-       VALUES ($1, $2, $3, $4, $5, $6, 'PENDING')\`,
-      [crypto.randomUUID(), eventId, cooperative_id,
-       'ORDER.PAID', JSON.stringify(req.body), signature]
-    );
-
-    // Step 6: Process with transaction
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-
-      // Find membership with FOR UPDATE lock
-      const membership = await client.query(\`
-        SELECT m.id, m.user_id
-        FROM memberships m
-        INNER JOIN users u ON m.user_id = u.id
-        WHERE u.member_id = $1
-          AND m.cooperative_id = $2
-          AND m.status = 'ACTIVE'
-        FOR UPDATE
-      \`, [member_id, cooperative_id]);
-
-      if (membership.rows.length === 0) {
-        throw new Error('Membership not found');
-      }
-
-      // Find active Paylater loan
-      const loan = await client.query(\`
-        SELECT id, remaining_amount FROM loans
-        WHERE membership_id = $1
-          AND type = 'PAYLATER'
-          AND status IN ('DISBURSED', 'OVERDUE')
-        FOR UPDATE
-      \`, [membership.rows[0].id]);
-
-      if (loan.rows.length > 0) {
-        // Reduce Paylater limit
-        const newRemaining = loan.rows[0].remaining_amount - order_amount;
-
-        await client.query(
-          'UPDATE loans SET remaining_amount = $1 WHERE id = $2',
-          [newRemaining, loan.rows[0].id]
-        );
-
-        // Record transaction
-        await client.query(\`
-          INSERT INTO savings_transactions
-          (savings_id, transaction_type, amount, description)
-          VALUES ($1, 'LOAN_PAYMENT', $2, $3)
-        \`, [savingsId, order_amount, 'Paylater AGRID Payment']);
-      }
-
-      await client.query(
-        "UPDATE agrid_webhook_logs SET status = 'SUCCESS' WHERE id = $1",
-        [webhookLogId]
-      );
-
-      await client.query('COMMIT');
-      res.json({ success: true });
-    } catch (err) {
-      await client.query('ROLLBACK');
-      throw err;
-    } finally {
-      client.release();
-    }
-  } catch (error) {
-    res.status(error.statusCode || 500).json({
-      success: false,
-      message: error.message,
+    
+    remainingBalance -= principalDue;
+    if (remainingBalance < 0) remainingBalance = 0;
+    
+    schedule.push({
+      month: i,
+      dueDate: currentDate.toLocaleDateString('id-ID', { month: 'short', year: 'numeric' }),
+      principal: principalDue,
+      interest: interestDue,
+      total: fixedPayment,
+      remaining: remainingBalance,
     });
   }
-});`;
+  
+  return { fixedPayment, schedule };
+}
 
-function highlightJS(code: string): string {
+function highlightGo(code: string): string {
   let highlighted = code
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -122,12 +154,18 @@ function highlightJS(code: string): string {
 
   highlighted = highlighted.replace(/(\/\/.*$)/gm, '<span class="text-slate-500 italic">$1</span>');
   highlighted = highlighted.replace(/(`[^`]*`)/g, '<span class="text-emerald-400">$1</span>');
-  highlighted = highlighted.replace(/('[^']*')/g, '<span class="text-emerald-400">$1</span>');
+  highlighted = highlighted.replace(/("[^"]*")/g, '<span class="text-emerald-400">$1</span>');
 
-  const keywords = ['const', 'let', 'var', 'function', 'async', 'await', 'return', 'if', 'else', 'try', 'catch', 'throw', 'new', 'require', 'module', 'exports', 'finally'];
+  const keywords = ['package', 'import', 'func', 'return', 'var', 'const', 'type', 'struct', 'if', 'for', 'range', 'error', 'nil', 'true', 'false'];
   keywords.forEach(kw => {
     const regex = new RegExp(`\\b(${kw})\\b`, 'g');
     highlighted = highlighted.replace(regex, '<span class="text-purple-400 font-semibold">$1</span>');
+  });
+
+  const types = ['context\\.Context', '\\*sql\\.Tx', 'uuid\\.UUID', 'float64', 'int', 'string', 'time\\.Time'];
+  types.forEach(t => {
+    const regex = new RegExp(`\\b(${t})\\b`, 'g');
+    highlighted = highlighted.replace(regex, '<span class="text-cyan-400">$1</span>');
   });
 
   highlighted = highlighted.replace(/\b(\d+)\b/g, '<span class="text-amber-400">$1</span>');
@@ -136,65 +174,294 @@ function highlightJS(code: string): string {
 }
 
 export default function App() {
+  const [principal, setPrincipal] = useState(10000000);
+  const [annualRate, setAnnualRate] = useState(12);
+  const [months, setMonths] = useState(12);
+  const [startDate, setStartDate] = useState('2026-01-15');
   const [copied, setCopied] = useState(false);
   const [showCode, setShowCode] = useState(false);
-  const [testStatus, setTestStatus] = useState<'idle' | 'verifying' | 'processing' | 'success' | 'error'>('idle');
-  const [activeStep, setActiveStep] = useState<number | null>(null);
+
+  const result = calculateAnnuity(principal, annualRate, months, new Date(startDate));
+  const totalPayment = result.fixedPayment * months;
+  const totalInterest = totalPayment - principal;
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(webhookCode).catch(() => {});
+    navigator.clipboard.writeText(goCode).catch(() => {});
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const runTest = () => {
-    setTestStatus('verifying');
-    setTimeout(() => setTestStatus('processing'), 1500);
-    setTimeout(() => setTestStatus('success'), 3000);
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('id-ID', {
+      style: 'currency',
+      currency: 'IDR',
+      minimumFractionDigits: 0,
+    }).format(amount);
   };
-
-  const resetTest = () => setTestStatus('idle');
-
-  const steps = [
-    { num: 1, label: 'Verify Signature', desc: 'HMAC SHA256 + timestamp check', icon: Shield, color: 'emerald' },
-    { num: 2, label: 'Idempotency Check', desc: 'Cek event sudah diproses', icon: RefreshCw, color: 'blue' },
-    { num: 3, label: 'Log Webhook', desc: 'Insert PENDING ke agrid_webhook_logs', icon: Database, color: 'purple' },
-    { num: 4, label: 'Process Payment', desc: 'BEGIN → UPDATE loans → INSERT transactions → COMMIT', icon: Zap, color: 'amber' },
-    { num: 5, label: 'Return Response', desc: 'Update SUCCESS & return 200 OK', icon: CheckCircle2, color: 'emerald' },
-  ];
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
       <div className="absolute inset-0 bg-grid-white/[0.02] bg-[size:16px_16px]" />
-
+      
       <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         {/* Header */}
         <div className="text-center mb-12">
           <div className="flex items-center justify-center gap-3 mb-6">
-            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-orange-500 to-amber-600 flex items-center justify-center shadow-2xl shadow-orange-500/20">
-              <Webhook className="w-8 h-8 text-white" />
+            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center shadow-2xl shadow-cyan-500/20">
+              <Calculator className="w-8 h-8 text-white" />
             </div>
           </div>
           <h1 className="text-4xl sm:text-5xl font-bold text-white mb-4">
-            AGRID Webhook Endpoint
+            Annuity Loan Calculator
           </h1>
           <p className="text-xl text-slate-300 max-w-3xl mx-auto">
-            POST /api/v1/webhooks/agrid-order
+            Calculate & Insert Annuity Schedule in 1 Transaction
           </p>
-          <div className="mt-4 inline-flex items-center gap-2 px-4 py-2 bg-orange-500/10 border border-orange-500/20 rounded-lg">
-            <Lock className="w-4 h-4 text-orange-400" />
-            <span className="text-orange-400 text-sm font-mono">HMAC SHA256 + Idempotency + Transaction</span>
+        </div>
+
+        {/* Formula Card */}
+        <div className="bg-gradient-to-r from-cyan-500/10 to-blue-500/10 border border-cyan-500/20 rounded-2xl p-6 mb-12">
+          <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+            <TrendingUp className="w-5 h-5 text-cyan-400" />
+            Annuity Formula
+          </h3>
+          <div className="bg-black/30 rounded-xl p-4 mb-4">
+            <code className="text-sm text-cyan-300 font-mono block">
+              A = P × [ r(1+r)^n ] / [ (1+r)^n - 1 ]
+            </code>
+          </div>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {[
+              { symbol: 'A', label: 'Annuity Payment', desc: 'Cicilan tetap per bulan' },
+              { symbol: 'P', label: 'Principal', desc: 'Pokok pinjaman' },
+              { symbol: 'r', label: 'Monthly Rate', desc: 'Bunga bulanan (desimal)' },
+              { symbol: 'n', label: 'Number of Months', desc: 'Jumlah bulan' },
+            ].map(item => (
+              <div key={item.symbol} className="bg-white/5 border border-white/5 rounded-lg p-3">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-xl font-bold text-cyan-400">{item.symbol}</span>
+                  <span className="text-xs font-semibold text-white">{item.label}</span>
+                </div>
+                <p className="text-[10px] text-slate-400">{item.desc}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Calculator */}
+        <div className="grid lg:grid-cols-2 gap-6 mb-12">
+          {/* Input */}
+          <div className="bg-white/5 border border-white/10 rounded-2xl p-6">
+            <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+              <Calculator className="w-5 h-5 text-emerald-400" />
+              Input Parameters
+            </h3>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">
+                  Pokok Pinjaman (Rp)
+                </label>
+                <input
+                  type="number"
+                  value={principal}
+                  onChange={e => setPrincipal(Number(e.target.value))}
+                  className="w-full px-4 py-2.5 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-500"
+                />
+                <p className="text-xs text-slate-500 mt-1">{formatCurrency(principal)}</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">
+                  Bunga Tahunan (%)
+                </label>
+                <input
+                  type="number"
+                  value={annualRate}
+                  onChange={e => setAnnualRate(Number(e.target.value))}
+                  step="0.1"
+                  className="w-full px-4 py-2.5 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-500"
+                />
+                <p className="text-xs text-slate-500 mt-1">
+                  {annualRate}% per tahun = {(annualRate / 12).toFixed(2)}% per bulan
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">
+                  Jangka Waktu (Bulan)
+                </label>
+                <input
+                  type="number"
+                  value={months}
+                  onChange={e => setMonths(Number(e.target.value))}
+                  min="1"
+                  max="360"
+                  className="w-full px-4 py-2.5 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-500"
+                />
+                <p className="text-xs text-slate-500 mt-1">
+                  {months} bulan = {(months / 12).toFixed(1)} tahun
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">
+                  Tanggal Mulai
+                </label>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={e => setStartDate(e.target.value)}
+                  className="w-full px-4 py-2.5 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-500"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Output */}
+          <div className="bg-white/5 border border-white/10 rounded-2xl p-6">
+            <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+              <TrendingUp className="w-5 h-5 text-amber-400" />
+              Calculation Results
+            </h3>
+            <div className="space-y-4">
+              <div className="p-4 rounded-xl bg-gradient-to-r from-emerald-500/10 to-teal-500/10 border border-emerald-500/20">
+                <p className="text-xs text-emerald-300 mb-1">Cicilan Tetap per Bulan</p>
+                <p className="text-3xl font-bold text-white">{formatCurrency(result.fixedPayment)}</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3 rounded-lg bg-white/5 border border-white/5">
+                  <p className="text-xs text-slate-400 mb-1">Total Pembayaran</p>
+                  <p className="text-lg font-bold text-white">{formatCurrency(totalPayment)}</p>
+                </div>
+                <div className="p-3 rounded-lg bg-white/5 border border-white/5">
+                  <p className="text-xs text-slate-400 mb-1">Total Bunga</p>
+                  <p className="text-lg font-bold text-amber-400">{formatCurrency(totalInterest)}</p>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-lg bg-white/5 border border-white/5">
+                <p className="text-xs text-slate-400 mb-1">Effective Interest Rate</p>
+                <p className="text-lg font-bold text-cyan-400">
+                  {((totalInterest / principal) * 100).toFixed(2)}%
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Schedule Table */}
+        <div className="mb-12">
+          <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-2">
+            <Calendar className="w-6 h-6 text-blue-400" />
+            Payment Schedule ({months} months)
+          </h2>
+
+          <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
+            <div className="overflow-x-auto max-h-96 overflow-y-auto">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-slate-900/95 backdrop-blur-sm">
+                  <tr className="border-b border-white/10">
+                    <th className="text-left py-2 px-3 text-slate-400 font-semibold">Bulan</th>
+                    <th className="text-left py-2 px-3 text-slate-400 font-semibold">Jatuh Tempo</th>
+                    <th className="text-right py-2 px-3 text-slate-400 font-semibold">Pokok</th>
+                    <th className="text-right py-2 px-3 text-slate-400 font-semibold">Bunga</th>
+                    <th className="text-right py-2 px-3 text-slate-400 font-semibold">Total</th>
+                    <th className="text-right py-2 px-3 text-slate-400 font-semibold">Sisa</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.schedule.map(row => (
+                    <tr key={row.month} className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                      <td className="py-2 px-3 text-slate-300">{row.month}</td>
+                      <td className="py-2 px-3 text-slate-300">{row.dueDate}</td>
+                      <td className="py-2 px-3 text-right text-emerald-400">{formatCurrency(row.principal)}</td>
+                      <td className="py-2 px-3 text-right text-amber-400">{formatCurrency(row.interest)}</td>
+                      <td className="py-2 px-3 text-right text-white font-medium">{formatCurrency(row.total)}</td>
+                      <td className="py-2 px-3 text-right text-slate-400">{formatCurrency(row.remaining)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        {/* Code Display */}
+        <div className="mb-12">
+          <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-2">
+            <Code2 className="w-6 h-6 text-cyan-400" />
+            Implementation Code
+          </h2>
+
+          <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 bg-white/5 border-b border-white/10">
+              <div className="flex items-center gap-2">
+                <span className="w-3 h-3 rounded-full bg-red-500/60" />
+                <span className="w-3 h-3 rounded-full bg-amber-500/60" />
+                <span className="w-3 h-3 rounded-full bg-emerald-500/60" />
+                <span className="text-xs text-slate-500 ml-2 font-mono">annuity_calculator.go</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleCopy}
+                  className="flex items-center gap-1.5 px-3 py-1 bg-white/5 border border-white/10 rounded text-xs text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+                >
+                  {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                  {copied ? 'Copied!' : 'Copy'}
+                </button>
+                <button
+                  onClick={() => setShowCode(!showCode)}
+                  className="px-3 py-1 bg-cyan-500/20 border border-cyan-500/30 rounded text-xs text-cyan-400 hover:bg-cyan-500/30 transition-colors"
+                >
+                  {showCode ? '▼ Collapse' : '▶ Show Code'}
+                </button>
+              </div>
+            </div>
+
+            {showCode ? (
+              <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+                <pre className="p-4 text-xs font-mono leading-relaxed">
+                  <code>
+                    {goCode.split('\n').map((line, i) => (
+                      <div key={i} className="flex hover:bg-white/5 transition-colors">
+                        <span className="text-slate-600 select-none w-10 text-right pr-4 flex-shrink-0">
+                          {i + 1}
+                        </span>
+                        <span
+                          className="flex-1"
+                          dangerouslySetInnerHTML={{ __html: highlightGo(line) }}
+                        />
+                      </div>
+                    ))}
+                  </code>
+                </pre>
+              </div>
+            ) : (
+              <div className="p-8 text-center">
+                <Calculator className="w-12 h-12 text-cyan-400/50 mx-auto mb-3" />
+                <p className="text-sm text-slate-400 mb-4">
+                  Full Go implementation dengan transaction support
+                </p>
+                <button
+                  onClick={() => setShowCode(true)}
+                  className="px-5 py-2 bg-gradient-to-r from-cyan-500 to-blue-500 text-white text-sm font-medium rounded-lg shadow-lg shadow-cyan-500/25 hover:shadow-cyan-500/40 transition-all"
+                >
+                  Lihat Full Code
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
         {/* Key Features */}
-        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-12">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {[
-            { icon: Shield, title: 'Signature Verification', desc: 'HMAC SHA256 dengan timestamp tolerance', color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
-            { icon: Database, title: 'DB Transaction', desc: 'ACID compliance dengan BEGIN/COMMIT/ROLLBACK', color: 'text-blue-400', bg: 'bg-blue-500/10' },
-            { icon: RefreshCw, title: 'Idempotency', desc: 'Mencegah duplicate processing', color: 'text-purple-400', bg: 'bg-purple-500/10' },
-            { icon: Lock, title: 'FOR UPDATE Lock', desc: 'Pessimistic locking untuk consistency', color: 'text-amber-400', bg: 'bg-amber-500/10' },
-          ].map((feature) => {
+            { icon: Calculator, title: 'Annuity Formula', desc: 'Rumus anuitas standar untuk cicilan tetap', color: 'text-cyan-400', bg: 'bg-cyan-500/10' },
+            { icon: Database, title: 'Transaction Safe', desc: 'Insert semua jadwal dalam 1 transaksi DB', color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
+            { icon: TrendingUp, title: 'Rounding Fix', desc: 'Penyesuaian bulan terakhir untuk rounding error', color: 'text-amber-400', bg: 'bg-amber-500/10' },
+            { icon: Calendar, title: 'Date Calculation', desc: 'Auto-calculate jatuh tempo per bulan', color: 'text-purple-400', bg: 'bg-purple-500/10' },
+          ].map(feature => {
             const Icon = feature.icon;
             return (
               <div key={feature.title} className="bg-white/5 border border-white/10 rounded-xl p-4 hover:bg-white/10 transition-all">
@@ -208,371 +475,11 @@ export default function App() {
           })}
         </div>
 
-        {/* 5-Step Flow */}
-        <div className="mb-12">
-          <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-2">
-            <ArrowRight className="w-6 h-6 text-orange-400" />
-            5-Step Processing Flow
-          </h2>
-
-          <div className="space-y-3">
-            {steps.map((step) => {
-              const Icon = step.icon;
-              const isActive = activeStep === step.num;
-              return (
-                <div
-                  key={step.num}
-                  onClick={() => setActiveStep(isActive ? null : step.num)}
-                  className={`cursor-pointer rounded-xl border transition-all ${
-                    isActive
-                      ? 'bg-white/10 border-white/20'
-                      : 'bg-white/5 border-white/10 hover:bg-white/10'
-                  }`}
-                >
-                  <div className="flex items-center gap-4 p-4">
-                    <div
-                      className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0"
-                      style={{
-                        backgroundColor: `rgba(${getColorRgb(step.color)}, 0.2)`,
-                        color: `rgb(${getColorRgb(step.color)})`,
-                      }}
-                    >
-                      <Icon className="w-5 h-5" />
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-slate-500">Step {step.num}</span>
-                        <h4 className="text-sm font-semibold text-white">{step.label}</h4>
-                      </div>
-                      <p className="text-xs text-slate-400 mt-0.5">{step.desc}</p>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Signature Verification Detail */}
-        <div className="mb-12">
-          <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-2">
-            <Shield className="w-6 h-6 text-emerald-400" />
-            Signature Verification
-          </h2>
-
-          <div className="grid md:grid-cols-2 gap-4 mb-6">
-            <div className="bg-white/5 border border-white/10 rounded-xl p-4">
-              <h4 className="text-sm font-semibold text-white mb-2">Request Headers</h4>
-              <div className="space-y-2 font-mono text-xs">
-                <div className="flex justify-between">
-                  <span className="text-slate-400">x-agrid-signature:</span>
-                  <span className="text-emerald-400 truncate ml-2">a1b2c3d4e5f6...</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">x-agrid-timestamp:</span>
-                  <span className="text-blue-400">1704067200</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">x-agrid-event-id:</span>
-                  <span className="text-purple-400">evt_xxxxx</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white/5 border border-white/10 rounded-xl p-4">
-              <h4 className="text-sm font-semibold text-white mb-2">Verification Logic</h4>
-              <div className="space-y-2 text-xs">
-                <div className="flex items-start gap-2">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 mt-0.5 flex-shrink-0" />
-                  <span className="text-slate-300">Check timestamp tolerance (5 min)</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 mt-0.5 flex-shrink-0" />
-                  <span className="text-slate-300">Create signed payload: timestamp + body</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 mt-0.5 flex-shrink-0" />
-                  <span className="text-slate-300">HMAC SHA256 with webhook secret</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 mt-0.5 flex-shrink-0" />
-                  <span className="text-slate-300">timingSafeEqual comparison</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-black/30 border border-white/5 rounded-xl p-4">
-            <pre className="text-xs text-slate-300 overflow-x-auto font-mono">
-              <code>{`// Signature Verification
-const signedPayload = \`\${timestamp}.\${JSON.stringify(payload)}\`;
-const expectedSignature = crypto
-  .createHmac('sha256', WEBHOOK_SECRET)
-  .update(signedPayload)
-  .digest('hex');
-
-// Timing-safe comparison
-const isValid = crypto.timingSafeEqual(
-  Buffer.from(signature, 'hex'),
-  Buffer.from(expectedSignature, 'hex')
-);`}</code>
-            </pre>
-          </div>
-        </div>
-
-        {/* Payload Structure */}
-        <div className="mb-12">
-          <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-2">
-            <Database className="w-6 h-6 text-blue-400" />
-            Request Payload
-          </h2>
-
-          <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden">
-            <pre className="p-4 text-xs text-slate-300 overflow-x-auto font-mono leading-relaxed">
-              <code>{`{
-  "event_id": "evt_agr_2026_001234",
-  "member_id": "AGR-2024-000001",
-  "cooperative_id": "987fcdeb-51a2-43d7-9012-3456789abcde",
-  "order_amount": 750000,
-  "status": "PAID",
-  "order_id": "ord_agr_001"
-}`}</code>
-            </pre>
-          </div>
-        </div>
-
-        {/* Transaction Flow */}
-        <div className="mb-12">
-          <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-2">
-            <Zap className="w-6 h-6 text-amber-400" />
-            Transaction Flow
-          </h2>
-
-          <div className="space-y-3">
-            {[
-              { step: 'BEGIN', desc: 'Mulai transaction', color: 'emerald' },
-              { step: 'SELECT ... FOR UPDATE', desc: 'Lock membership & loan rows', color: 'blue' },
-              { step: 'UPDATE loans', desc: 'remaining_amount = remaining_amount - order_amount', color: 'purple' },
-              { step: 'INSERT transactions', desc: "type = 'LOAN_PAYMENT'", color: 'amber' },
-              { step: 'COMMIT', desc: 'Commit semua perubahan', color: 'emerald' },
-            ].map((item, i) => (
-              <div key={i} className="flex items-center gap-4 p-3 rounded-lg bg-white/5 border border-white/5">
-                <code
-                  className="text-xs font-bold w-40 flex-shrink-0"
-                  style={{ color: `rgb(${getColorRgb(item.color)})` }}
-                >
-                  {item.step}
-                </code>
-                <span className="text-xs text-slate-300">{item.desc}</span>
-              </div>
-            ))}
-            <div className="flex items-center gap-4 p-3 rounded-lg bg-rose-500/5 border border-rose-500/20">
-              <code className="text-xs font-bold text-rose-400 w-40 flex-shrink-0">ROLLBACK</code>
-              <span className="text-xs text-slate-400">jika ada error di tengah proses</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Code Display */}
-        <div className="mb-12">
-          <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-2">
-            <CodeIcon />
-            Implementation Code
-          </h2>
-
-          <div className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-3 bg-white/5 border-b border-white/10">
-              <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-red-500/60" />
-                <span className="w-3 h-3 rounded-full bg-amber-500/60" />
-                <span className="w-3 h-3 rounded-full bg-emerald-500/60" />
-                <span className="text-xs text-slate-500 ml-2 font-mono">webhook_agrid.js</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={handleCopy}
-                  className="flex items-center gap-1.5 px-3 py-1 bg-white/5 border border-white/10 rounded text-xs text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
-                >
-                  {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                  {copied ? 'Copied!' : 'Copy'}
-                </button>
-                <button
-                  onClick={() => setShowCode(!showCode)}
-                  className="px-3 py-1 bg-orange-500/20 border border-orange-500/30 rounded text-xs text-orange-400 hover:bg-orange-500/30 transition-colors"
-                >
-                  {showCode ? '▼ Collapse' : '▶ Show Code'}
-                </button>
-              </div>
-            </div>
-
-            {showCode ? (
-              <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
-                <pre className="p-4 text-xs font-mono leading-relaxed">
-                  <code>
-                    {webhookCode.split('\n').map((line, i) => (
-                      <div key={i} className="flex hover:bg-white/5 transition-colors">
-                        <span className="text-slate-600 select-none w-10 text-right pr-4 flex-shrink-0">{i + 1}</span>
-                        <span
-                          className="flex-1"
-                          dangerouslySetInnerHTML={{ __html: highlightJS(line) }}
-                        />
-                      </div>
-                    ))}
-                  </code>
-                </pre>
-              </div>
-            ) : (
-              <div className="p-8 text-center">
-                <Webhook className="w-12 h-12 text-orange-400/50 mx-auto mb-3" />
-                <p className="text-sm text-slate-400 mb-4">
-                  Full production-ready webhook implementation
-                </p>
-                <button
-                  onClick={() => setShowCode(true)}
-                  className="px-5 py-2 bg-gradient-to-r from-orange-500 to-amber-500 text-white text-sm font-medium rounded-lg shadow-lg shadow-orange-500/25 hover:shadow-orange-500/40 transition-all"
-                >
-                  Lihat Full Code
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Test Simulator */}
-        <div className="mb-12">
-          <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-2">
-            <Zap className="w-6 h-6 text-amber-400" />
-            Test Simulator
-          </h2>
-
-          <div className="grid md:grid-cols-2 gap-6">
-            <div>
-              <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 block">
-                Test Payload
-              </label>
-              <div className="bg-black/30 border border-white/5 rounded-xl p-4">
-                <pre className="text-xs text-slate-300 font-mono overflow-x-auto">
-                  <code>{`{
-  "event_id": "evt_test_001",
-  "member_id": "AGR-2024-000001",
-  "cooperative_id": "uuid-here",
-  "order_amount": 750000,
-  "status": "PAID",
-  "order_id": "ord_test_001"
-}`}</code>
-                </pre>
-              </div>
-              <button
-                onClick={testStatus === 'idle' || testStatus === 'success' || testStatus === 'error' ? (testStatus === 'idle' ? runTest : resetTest) : undefined}
-                disabled={testStatus === 'verifying' || testStatus === 'processing'}
-                className="mt-3 w-full px-4 py-2.5 bg-gradient-to-r from-orange-500 to-amber-500 text-white font-medium rounded-lg shadow-lg shadow-orange-500/25 hover:shadow-orange-500/40 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {testStatus === 'idle' && <><Zap className="w-4 h-4" /> Run Test</>}
-                {testStatus === 'verifying' && <><Shield className="w-4 h-4 animate-pulse" /> Verifying Signature...</>}
-                {testStatus === 'processing' && <><Database className="w-4 h-4 animate-pulse" /> Processing Transaction...</>}
-                {testStatus === 'success' && <><CheckCircle2 className="w-4 h-4" /> Success! (Click to Reset)</>}
-                {testStatus === 'error' && <><XCircle className="w-4 h-4" /> Error (Click to Reset)</>}
-              </button>
-            </div>
-
-            <div>
-              <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2 block">
-                Processing Status
-              </label>
-              <div className="space-y-2">
-                {[
-                  { label: 'Signature Verified', active: testStatus !== 'idle' },
-                  { label: 'Idempotency Check', active: testStatus === 'processing' || testStatus === 'success' },
-                  { label: 'Transaction Started', active: testStatus === 'processing' || testStatus === 'success' },
-                  { label: 'Membership Found', active: testStatus === 'success' },
-                  { label: 'Paylater Updated', active: testStatus === 'success' },
-                  { label: 'Transaction Committed', active: testStatus === 'success' },
-                ].map((item, i) => (
-                  <div
-                    key={item.label}
-                    className={`flex items-center gap-3 p-2.5 rounded-lg transition-all ${
-                      item.active
-                        ? 'bg-emerald-500/10 border border-emerald-500/20'
-                        : 'bg-white/5 border border-white/5 opacity-50'
-                    }`}
-                  >
-                    {item.active ? (
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-                    ) : (
-                      <div className="w-4 h-4 rounded-full border border-slate-600 flex-shrink-0" />
-                    )}
-                    <span className={`text-xs ${item.active ? 'text-white' : 'text-slate-500'}`}>
-                      {item.label}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Error Responses */}
-        <div className="mb-12">
-          <h2 className="text-2xl font-bold text-white mb-6 flex items-center gap-2">
-            <AlertTriangle className="w-6 h-6 text-amber-400" />
-            Error Responses
-          </h2>
-
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {[
-              { code: '401', status: 'Unauthorized', desc: 'Invalid signature atau timestamp expired' },
-              { code: '400', status: 'Bad Request', desc: 'Missing fields atau invalid payload' },
-              { code: '404', status: 'Not Found', desc: 'Membership tidak ditemukan' },
-              { code: '409', status: 'Conflict', desc: 'Payment exceeds loan balance' },
-              { code: '500', status: 'Server Error', desc: 'Transaction rollback terjadi' },
-              { code: '200', status: 'Already Processed', desc: 'Idempotent response' },
-            ].map((item) => (
-              <div key={item.code} className="bg-white/5 border border-white/5 rounded-lg p-3">
-                <div className="flex items-center gap-2 mb-1">
-                  <span
-                    className={`text-xs font-bold ${
-                      item.code.startsWith('2')
-                        ? 'text-emerald-400'
-                        : item.code.startsWith('4')
-                        ? 'text-amber-400'
-                        : 'text-rose-400'
-                    }`}
-                  >
-                    {item.code}
-                  </span>
-                  <span className="text-xs text-slate-400">{item.status}</span>
-                </div>
-                <p className="text-[10px] text-slate-500">{item.desc}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-
         {/* Footer */}
-        <div className="text-center text-slate-400 text-sm">
+        <div className="mt-16 text-center text-slate-400 text-sm">
           <p>© 2026 AGR.BIZ.ID - KOPERASI DIGITAL. All rights reserved.</p>
         </div>
       </div>
     </div>
   );
-}
-
-function CodeIcon() {
-  return (
-    <svg className="w-6 h-6 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
-    </svg>
-  );
-}
-
-function getColorRgb(color: string): string {
-  const colors: Record<string, string> = {
-    emerald: '16, 185, 129',
-    blue: '59, 130, 246',
-    amber: '245, 158, 11',
-    purple: '168, 85, 247',
-    rose: '244, 63, 94',
-    orange: '249, 115, 22',
-  };
-  return colors[color] || '255, 255, 255';
 }
