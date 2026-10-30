@@ -1,382 +1,413 @@
 import { useState } from 'react';
-import { tables, relationships, TableSchema } from '../data/database';
+
+interface Column {
+  name: string;
+  type: string;
+  constraints: string[];
+  description: string;
+}
+
+interface TableSchema {
+  id: string;
+  name: string;
+  number: number;
+  description: string;
+  icon: string;
+  color: string;
+  colorFrom: string;
+  colorTo: string;
+  borderColor: string;
+  bgGlow: string;
+  columns: Column[];
+}
+
+const tables: TableSchema[] = [
+  {
+    id: 'cooperatives',
+    name: 'cooperatives',
+    number: 1,
+    description: 'Tabel Koperasi — Menyimpan data entitas koperasi yang terdaftar dalam sistem.',
+    icon: '🏛️',
+    color: 'text-blue-400',
+    colorFrom: 'from-blue-500',
+    colorTo: 'to-cyan-500',
+    borderColor: 'border-blue-500/30',
+    bgGlow: 'bg-blue-500/10',
+    columns: [
+      { name: 'id', type: 'UUID', constraints: ['PK', 'DEFAULT gen_random_uuid()'], description: 'Primary key unik untuk setiap koperasi' },
+      { name: 'name', type: 'VARCHAR(150)', constraints: ['NOT NULL'], description: 'Nama lengkap koperasi' },
+      { name: 'coop_code', type: 'VARCHAR(20)', constraints: ['UNIQUE', 'NOT NULL'], description: "Kode koperasi (misal: 'AGR', 'KOPMAJU')" },
+      { name: 'legal_entity_number', type: 'VARCHAR(50)', constraints: [], description: 'Nomor badan hukum koperasi' },
+      { name: 'created_at', type: 'TIMESTAMP', constraints: ['DEFAULT CURRENT_TIMESTAMP'], description: 'Waktu pendaftaran koperasi' },
+    ],
+  },
+  {
+    id: 'users',
+    name: 'users',
+    number: 2,
+    description: 'Tabel Pengguna Global — Menyimpan kredensial login dan data profil pengguna.',
+    icon: '👤',
+    color: 'text-emerald-400',
+    colorFrom: 'from-emerald-500',
+    colorTo: 'to-teal-500',
+    borderColor: 'border-emerald-500/30',
+    bgGlow: 'bg-emerald-500/10',
+    columns: [
+      { name: 'id', type: 'UUID', constraints: ['PK', 'DEFAULT gen_random_uuid()'], description: 'Primary key unik untuk setiap pengguna' },
+      { name: 'member_id', type: 'VARCHAR(30)', constraints: ['UNIQUE', 'NOT NULL'], description: 'ID Unik Anggota — Primary Login Key' },
+      { name: 'password_hash', type: 'VARCHAR(255)', constraints: ['NOT NULL'], description: 'Hash password (bcrypt/argon2)' },
+      { name: 'full_name', type: 'VARCHAR(150)', constraints: ['NOT NULL'], description: 'Nama lengkap pengguna' },
+      { name: 'phone', type: 'VARCHAR(20)', constraints: ['UNIQUE'], description: 'Nomor telepon unik' },
+      { name: 'created_at', type: 'TIMESTAMP', constraints: ['DEFAULT CURRENT_TIMESTAMP'], description: 'Waktu pembuatan akun' },
+    ],
+  },
+  {
+    id: 'memberships',
+    name: 'memberships',
+    number: 3,
+    description: 'Tabel Keanggotaan — Menghubungkan pengguna ke koperasi dengan peran tertentu.',
+    icon: '🔗',
+    color: 'text-purple-400',
+    colorFrom: 'from-purple-500',
+    colorTo: 'to-violet-500',
+    borderColor: 'border-purple-500/30',
+    bgGlow: 'bg-purple-500/10',
+    columns: [
+      { name: 'id', type: 'UUID', constraints: ['PK', 'DEFAULT gen_random_uuid()'], description: 'Primary key keanggotaan' },
+      { name: 'user_id', type: 'UUID', constraints: ['FK → users.id', 'ON DELETE CASCADE'], description: 'Referensi ke tabel users' },
+      { name: 'cooperative_id', type: 'UUID', constraints: ['FK → cooperatives.id', 'ON DELETE CASCADE'], description: 'Referensi ke tabel cooperatives' },
+      { name: 'role', type: 'VARCHAR(20)', constraints: ["DEFAULT 'MEMBER'"], description: "Peran: 'MEMBER', 'ADMIN', 'MANAGER'" },
+      { name: 'join_date', type: 'DATE', constraints: ['DEFAULT CURRENT_DATE'], description: 'Tanggal bergabung' },
+      { name: 'status', type: 'VARCHAR(20)', constraints: ["DEFAULT 'ACTIVE'"], description: "Status: 'ACTIVE', 'INACTIVE', 'SUSPENDED'" },
+    ],
+  },
+  {
+    id: 'id_sequences',
+    name: 'id_sequences',
+    number: 4,
+    description: 'Tabel Antrian ID — Mencegah race condition saat generate ID transaksi.',
+    icon: '🔢',
+    color: 'text-amber-400',
+    colorFrom: 'from-amber-500',
+    colorTo: 'to-orange-500',
+    borderColor: 'border-amber-500/30',
+    bgGlow: 'bg-amber-500/10',
+    columns: [
+      { name: 'cooperative_id', type: 'UUID', constraints: ['PK', 'FK → cooperatives.id', 'ON DELETE CASCADE'], description: 'Primary key & referensi ke koperasi' },
+      { name: 'current_year', type: 'INT', constraints: ['NOT NULL'], description: 'Tahun berjalan untuk penomoran' },
+      { name: 'current_sequence', type: 'INT', constraints: ['NOT NULL', 'DEFAULT 0'], description: 'Nomor urut terakhir (Pessimistic Locking)' },
+    ],
+  },
+  {
+    id: 'savings',
+    name: 'savings',
+    number: 5,
+    description: 'Tabel Simpanan — Ledger sederhana untuk mencatat saldo simpanan anggota.',
+    icon: '💰',
+    color: 'text-rose-400',
+    colorFrom: 'from-rose-500',
+    colorTo: 'to-pink-500',
+    borderColor: 'border-rose-500/30',
+    bgGlow: 'bg-rose-500/10',
+    columns: [
+      { name: 'id', type: 'UUID', constraints: ['PK', 'DEFAULT gen_random_uuid()'], description: 'Primary key simpanan' },
+      { name: 'membership_id', type: 'UUID', constraints: ['FK → memberships.id'], description: 'Referensi ke keanggotaan' },
+      { name: 'type', type: 'VARCHAR(20)', constraints: ['NOT NULL'], description: "Jenis: 'POKOK', 'WAJIB', 'SUKARELA'" },
+      { name: 'balance', type: 'NUMERIC(15,2)', constraints: ['DEFAULT 0.00'], description: 'Saldo simpanan' },
+      { name: 'updated_at', type: 'TIMESTAMP', constraints: ['DEFAULT CURRENT_TIMESTAMP'], description: 'Waktu terakhir diupdate' },
+    ],
+  },
+];
+
+const relations = [
+  { from: 'users', to: 'memberships', label: '1:N', type: 'one-to-many' },
+  { from: 'cooperatives', to: 'memberships', label: '1:N', type: 'one-to-many' },
+  { from: 'cooperatives', to: 'id_sequences', label: '1:1', type: 'one-to-one' },
+  { from: 'memberships', to: 'savings', label: '1:N', type: 'one-to-many' },
+];
 
 export default function DatabaseSchema() {
   const [activeTable, setActiveTable] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<'erd' | 'tables'>('erd');
+  const [showRelations, setShowRelations] = useState(true);
 
   return (
     <section>
-      <div className="flex items-center justify-between mb-8 flex-wrap gap-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-amber-500/20 flex items-center justify-center">
-            <svg className="w-5 h-5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
-            </svg>
-          </div>
-          <div>
-            <h2 className="text-2xl sm:text-3xl font-bold text-white">Skema Database</h2>
-            <p className="text-sm text-slate-400">PostgreSQL — 5 Tabel, ACID Compliant, Row-Level Security</p>
-          </div>
+      <div className="flex items-center gap-3 mb-8">
+        <div className="w-10 h-10 rounded-lg bg-amber-500/20 flex items-center justify-center">
+          <svg className="w-5 h-5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
+          </svg>
         </div>
-
-        {/* Toggle */}
-        <div className="flex items-center gap-1 p-1 rounded-lg bg-white/5 border border-white/10">
-          <button
-            onClick={() => setViewMode('erd')}
-            className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
-              viewMode === 'erd'
-                ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            📊 ERD
-          </button>
-          <button
-            onClick={() => setViewMode('tables')}
-            className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
-              viewMode === 'tables'
-                ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
-                : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            📋 Tabel
-          </button>
+        <div className="flex-1">
+          <h2 className="text-2xl sm:text-3xl font-bold text-white">Skema Database PostgreSQL</h2>
+          <p className="text-sm text-slate-400 mt-1">Entity Relationship Diagram — 5 tabel dengan relasi terstruktur</p>
         </div>
+        <button
+          onClick={() => setShowRelations(!showRelations)}
+          className={`hidden sm:flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+            showRelations
+              ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+              : 'bg-white/5 text-slate-400 border border-white/10 hover:bg-white/10'
+          }`}
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+          </svg>
+          Relasi
+        </button>
       </div>
 
-      {viewMode === 'erd' ? (
-        <ERDView activeTable={activeTable} setActiveTable={setActiveTable} />
-      ) : (
-        <TablesView activeTable={activeTable} setActiveTable={setActiveTable} />
-      )}
+      {/* ERD Visualization */}
+      <div className="bg-white/5 border border-white/10 rounded-2xl p-6 sm:p-8 backdrop-blur-sm mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {tables.map((table) => (
+            <button
+              key={table.id}
+              onClick={() => setActiveTable(activeTable === table.id ? null : table.id)}
+              className={`
+                text-left relative overflow-hidden rounded-xl border-2 transition-all duration-300
+                ${activeTable === table.id
+                  ? `${table.borderColor} shadow-lg scale-[1.02]`
+                  : 'border-white/10 hover:border-white/20 hover:scale-[1.01]'
+                }
+              `}
+              style={activeTable === table.id ? {
+                boxShadow: `0 0 30px ${getGlowColor(table.id)}`,
+              } : {}}
+            >
+              {/* Gradient top */}
+              <div className={`h-1 bg-gradient-to-r ${table.colorFrom} ${table.colorTo}`} />
+              
+              <div className="p-4">
+                {/* Table Header */}
+                <div className="flex items-center gap-3 mb-3">
+                  <span className="text-xl">{table.icon}</span>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-xs font-bold px-2 py-0.5 rounded ${table.bgGlow} ${table.color}`}>
+                        #{table.number}
+                      </span>
+                      <code className={`text-sm font-bold ${table.color}`}>{table.name}</code>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-0.5">{table.columns.length} kolom</p>
+                  </div>
+                </div>
+
+                {/* Column Preview */}
+                <div className="space-y-1">
+                  {table.columns.slice(0, 3).map((col) => (
+                    <div key={col.name} className="flex items-center gap-2 text-xs">
+                      {col.constraints.includes('PK') && (
+                        <span className="w-4 h-4 rounded bg-amber-500/20 text-amber-400 flex items-center justify-center text-[10px] font-bold flex-shrink-0">🔑</span>
+                      )}
+                      {col.constraints.includes('FK') && !col.constraints.includes('PK') && (
+                        <span className="w-4 h-4 rounded bg-blue-500/20 text-blue-400 flex items-center justify-center text-[10px] font-bold flex-shrink-0">🔗</span>
+                      )}
+                      {!col.constraints.includes('PK') && !col.constraints.includes('FK') && (
+                        <span className="w-4 h-4 flex-shrink-0" />
+                      )}
+                      <code className="text-slate-300">{col.name}</code>
+                      <span className="text-slate-600 ml-auto">{col.type}</span>
+                    </div>
+                  ))}
+                  {table.columns.length > 3 && (
+                    <div className="text-xs text-slate-600 pl-6">+{table.columns.length - 3} kolom lainnya...</div>
+                  )}
+                </div>
+              </div>
+            </button>
+          ))}
+        </div>
+
+        {/* Relations */}
+        {showRelations && (
+          <div className="mt-6 pt-6 border-t border-white/10">
+            <h4 className="text-sm font-semibold text-slate-400 mb-4 flex items-center gap-2">
+              <svg className="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+              </svg>
+              Relasi Antar Tabel
+            </h4>
+            <div className="grid sm:grid-cols-2 gap-3">
+              {relations.map((rel, i) => (
+                <div key={i} className="flex items-center gap-3 p-3 rounded-lg bg-white/5 border border-white/5">
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                    <code className="text-xs text-blue-400 font-medium truncate">{rel.from}</code>
+                    <svg className="w-4 h-4 text-white/30 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
+                    </svg>
+                    <code className="text-xs text-purple-400 font-medium truncate">{rel.to}</code>
+                  </div>
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-bold flex-shrink-0 ${
+                    rel.type === 'one-to-one' ? 'bg-amber-500/20 text-amber-400' : 'bg-emerald-500/20 text-emerald-400'
+                  }`}>
+                    {rel.label}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Detailed Table View */}
+      <div className="space-y-6">
+        {tables.map((table) => (
+          <div
+            key={table.id}
+            className={`
+              relative overflow-hidden rounded-2xl border transition-all duration-500
+              ${activeTable === table.id
+                ? `${table.borderColor} shadow-xl`
+                : 'border-white/10'
+              }
+            `}
+            style={activeTable === table.id ? {
+              boxShadow: `0 0 40px ${getGlowColor(table.id)}`,
+            } : {}}
+          >
+            {/* Background glow */}
+            <div className={`absolute inset-0 ${table.bgGlow} opacity-0 transition-opacity duration-500 ${activeTable === table.id ? 'opacity-100' : ''}`} />
+            
+            {/* Gradient top border */}
+            <div className={`h-1 bg-gradient-to-r ${table.colorFrom} ${table.colorTo}`} />
+
+            <div className="relative p-6">
+              {/* Table Header */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-5">
+                <div className="flex items-center gap-3">
+                  <span className="text-3xl">{table.icon}</span>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-xs font-bold px-2 py-0.5 rounded ${table.bgGlow} ${table.color} border ${table.borderColor}`}>
+                        Tabel {table.number}
+                      </span>
+                      <code className={`text-lg font-bold ${table.color}`}>{table.name}</code>
+                    </div>
+                    <p className="text-sm text-slate-400 mt-1">{table.description}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setActiveTable(activeTable === table.id ? null : table.id)}
+                  className={`text-xs px-3 py-1.5 rounded-lg transition-all ${
+                    activeTable === table.id
+                      ? `${table.bgGlow} ${table.color} border ${table.borderColor}`
+                      : 'bg-white/5 text-slate-400 border border-white/10 hover:bg-white/10'
+                  }`}
+                >
+                  {activeTable === table.id ? 'Tutup Detail' : 'Lihat Detail'}
+                </button>
+              </div>
+
+              {/* Columns Table */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-white/10">
+                      <th className="text-left py-2 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Kolom</th>
+                      <th className="text-left py-2 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Tipe Data</th>
+                      <th className="text-left py-2 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Constraints</th>
+                      <th className="text-left py-2 px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider hidden sm:table-cell">Deskripsi</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {table.columns.map((col) => (
+                      <tr key={col.name} className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                        <td className="py-2.5 px-3">
+                          <div className="flex items-center gap-2">
+                            {col.constraints.includes('PK') && (
+                              <span className="text-amber-400" title="Primary Key">🔑</span>
+                            )}
+                            {col.constraints.some(c => c.startsWith('FK')) && !col.constraints.includes('PK') && (
+                              <span className="text-blue-400" title="Foreign Key">🔗</span>
+                            )}
+                            {col.constraints.includes('UNIQUE') && !col.constraints.includes('PK') && (
+                              <span className="text-emerald-400" title="Unique">⚡</span>
+                            )}
+                            <code className={`font-medium ${table.color}`}>{col.name}</code>
+                          </div>
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <code className="text-xs px-2 py-0.5 rounded bg-white/5 text-slate-300 border border-white/10">
+                            {col.type}
+                          </code>
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <div className="flex flex-wrap gap-1">
+                            {col.constraints.map((c, i) => (
+                              <span
+                                key={i}
+                                className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${getConstraintStyle(c)}`}
+                              >
+                                {c.length > 25 ? c.substring(0, 25) + '...' : c}
+                              </span>
+                            ))}
+                          </div>
+                        </td>
+                        <td className="py-2.5 px-3 text-slate-400 text-xs hidden sm:table-cell">
+                          {col.description}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Mobile Description */}
+              <div className="sm:hidden mt-4 space-y-2">
+                {table.columns.map((col) => (
+                  <div key={col.name} className="text-xs text-slate-500">
+                    <span className={`${table.color} font-medium`}>{col.name}</span>: {col.description}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* SQL Info */}
+      <div className="mt-8 bg-white/5 border border-white/10 rounded-2xl p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-8 h-8 rounded-lg bg-indigo-500/20 flex items-center justify-center">
+            <span className="text-sm">📋</span>
+          </div>
+          <h3 className="text-lg font-bold text-white">Fitur Database</h3>
+        </div>
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {[
+            { icon: '🔐', label: 'UUID Primary Key', desc: 'Gen_random_uuid() untuk setiap tabel' },
+            { icon: '🔗', label: 'Foreign Key + CASCADE', desc: 'Referential integrity dengan cascade delete' },
+            { icon: '⚡', label: 'Unique Constraints', desc: 'Mencegah duplikasi data kritis' },
+            { icon: '📊', label: 'NUMERIC Precision', desc: 'NUMERIC(15,2) untuk akurasi keuangan' },
+          ].map((feature) => (
+            <div key={feature.label} className="p-3 rounded-lg bg-white/5 border border-white/5">
+              <div className="text-xl mb-1">{feature.icon}</div>
+              <div className="text-sm font-semibold text-white">{feature.label}</div>
+              <div className="text-xs text-slate-500 mt-0.5">{feature.desc}</div>
+            </div>
+          ))}
+        </div>
+      </div>
     </section>
   );
 }
 
-/* ───────── ERD View ───────── */
-function ERDView({
-  activeTable,
-  setActiveTable,
-}: {
-  activeTable: string | null;
-  setActiveTable: (id: string | null) => void;
-}) {
-  return (
-    <div className="bg-white/5 border border-white/10 rounded-2xl p-6 sm:p-8 backdrop-blur-sm">
-      {/* ERD Diagram */}
-      <div className="relative">
-        {/* Desktop Layout */}
-        <div className="hidden lg:block">
-          <div className="grid grid-cols-3 gap-6">
-            {/* Row 1 */}
-            <ERDNode
-              table={tables[0]} // cooperatives
-              isActive={activeTable === 'cooperatives'}
-              onClick={() => setActiveTable(activeTable === 'cooperatives' ? null : 'cooperatives')}
-            />
-            <div className="flex items-center justify-center">
-              <ERDRelation from="users" to="cooperatives" label="melalui memberships" />
-            </div>
-            <ERDNode
-              table={tables[1]} // users
-              isActive={activeTable === 'users'}
-              onClick={() => setActiveTable(activeTable === 'users' ? null : 'users')}
-            />
-
-            {/* Row 2 */}
-            <ERDNode
-              table={tables[3]} // id_sequences
-              isActive={activeTable === 'id_sequences'}
-              onClick={() => setActiveTable(activeTable === 'id_sequences' ? null : 'id_sequences')}
-            />
-            <ERDNode
-              table={tables[2]} // memberships
-              isActive={activeTable === 'memberships'}
-              onClick={() => setActiveTable(activeTable === 'memberships' ? null : 'memberships')}
-              highlight
-            />
-            <div className="flex flex-col items-center justify-center gap-4">
-              <div className="text-xs text-slate-500 text-center px-3 py-2 rounded-lg bg-white/5 border border-white/10">
-                <div className="font-semibold text-slate-300 mb-1">Relasi Utama</div>
-                <div>users ↔ cooperatives</div>
-                <div className="text-slate-500">via memberships</div>
-              </div>
-            </div>
-
-            {/* Row 3 */}
-            <div />
-            <ERDNode
-              table={tables[4]} // savings
-              isActive={activeTable === 'savings'}
-              onClick={() => setActiveTable(activeTable === 'savings' ? null : 'savings')}
-            />
-            <div />
-          </div>
-        </div>
-
-        {/* Mobile Layout */}
-        <div className="lg:hidden flex flex-col items-center gap-4">
-          {tables.map((table) => (
-            <ERDNode
-              key={table.id}
-              table={table}
-              isActive={activeTable === table.id}
-              onClick={() => setActiveTable(activeTable === table.id ? null : table.id)}
-            />
-          ))}
-        </div>
-      </div>
-
-      {/* Relationships Legend */}
-      <div className="mt-8 pt-6 border-t border-white/10">
-        <h4 className="text-sm font-semibold text-slate-400 mb-4">🔗 Relasi Antar Tabel (Foreign Keys)</h4>
-        <div className="grid sm:grid-cols-2 gap-3">
-          {relationships.map((rel, i) => (
-            <div key={i} className="flex items-center gap-3 p-3 rounded-lg bg-white/5 border border-white/5">
-              <span className="text-lg">→</span>
-              <div className="flex-1 min-w-0">
-                <div className="text-xs font-mono">
-                  <span className="text-purple-400">{rel.from}</span>
-                  <span className="text-slate-600"> . </span>
-                  <span className="text-amber-400">{rel.label}</span>
-                  <span className="text-slate-600"> → </span>
-                  <span className="text-emerald-400">{rel.to}</span>
-                </div>
-                <div className="flex items-center gap-2 mt-1">
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-slate-400 font-mono">{rel.type}</span>
-                  {rel.onDelete && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-400 font-mono">ON DELETE {rel.onDelete}</span>
-                  )}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Active Table Detail */}
-      {activeTable && (
-        <div className="mt-6 pt-6 border-t border-white/10">
-          <TableDetail table={tables.find((t) => t.id === activeTable)!} />
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ───────── ERD Node ───────── */
-function ERDNode({
-  table,
-  isActive,
-  onClick,
-  highlight,
-}: {
-  table: TableSchema;
-  isActive: boolean;
-  onClick: () => void;
-  highlight?: boolean;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={`
-        w-full text-left rounded-xl border-2 transition-all duration-300 cursor-pointer
-        ${isActive
-          ? `${table.borderColor} shadow-lg scale-[1.02]`
-          : 'border-white/10 hover:border-white/20 hover:scale-[1.01]'
-        }
-        ${highlight ? 'ring-1 ring-purple-500/20' : ''}
-      `}
-      style={isActive ? { boxShadow: `0 0 30px ${getGlowColor(table.id)}` } : {}}
-    >
-      {/* Header */}
-      <div className={`px-4 py-3 rounded-t-[10px] bg-gradient-to-r ${table.colorFrom} ${table.colorTo} bg-opacity-10`}>
-        <div className="flex items-center gap-2">
-          <span className="text-lg">{table.icon}</span>
-          <span className="font-mono font-bold text-white text-sm">{table.name}</span>
-        </div>
-        <div className="text-xs text-white/60 mt-0.5">{table.subtitle}</div>
-      </div>
-
-      {/* Columns preview */}
-      <div className="p-3 bg-white/[0.02]">
-        {table.columns.slice(0, 3).map((col) => (
-          <div key={col.name} className="flex items-center justify-between py-1 text-xs">
-            <div className="flex items-center gap-2">
-              {col.constraint === 'PK' && <span className="text-[10px] px-1 py-0.5 rounded bg-amber-500/20 text-amber-400 font-mono">PK</span>}
-              {col.constraint?.startsWith('FK') && <span className="text-[10px] px-1 py-0.5 rounded bg-blue-500/20 text-blue-400 font-mono">FK</span>}
-              {col.constraint === 'UNIQUE' && <span className="text-[10px] px-1 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-mono">UQ</span>}
-              <span className="font-mono text-slate-300">{col.name}</span>
-            </div>
-            <span className="font-mono text-slate-500 text-[10px]">{col.type}</span>
-          </div>
-        ))}
-        {table.columns.length > 3 && (
-          <div className="text-[10px] text-slate-600 text-center mt-1">+{table.columns.length - 3} kolom lainnya</div>
-        )}
-      </div>
-    </button>
-  );
-}
-
-/* ───────── ERD Relation ───────── */
-function ERDRelation({ from, to, label }: { from: string; to: string; label: string }) {
-  return (
-    <div className="flex flex-col items-center gap-1">
-      <div className="flex items-center gap-2">
-        <span className="text-[10px] font-mono text-emerald-400">{from}</span>
-        <div className="flex items-center">
-          <div className="w-6 h-0.5 bg-gradient-to-r from-emerald-500/50 to-blue-500/50" />
-          <div className="w-2 h-2 rounded-full bg-white/20 border border-white/30" />
-          <div className="w-6 h-0.5 bg-gradient-to-r from-blue-500/50 to-purple-500/50" />
-        </div>
-        <span className="text-[10px] font-mono text-blue-400">{to}</span>
-      </div>
-      <span className="text-[10px] text-slate-500">{label}</span>
-    </div>
-  );
-}
-
-/* ───────── Tables View ───────── */
-function TablesView({
-  activeTable,
-  setActiveTable,
-}: {
-  activeTable: string | null;
-  setActiveTable: (id: string | null) => void;
-}) {
-  return (
-    <div className="space-y-4">
-      {tables.map((table) => (
-        <div
-          key={table.id}
-          className={`
-            rounded-2xl border transition-all duration-300 overflow-hidden
-            ${activeTable === table.id ? table.borderColor : 'border-white/10'}
-          `}
-          style={activeTable === table.id ? { boxShadow: `0 0 30px ${getGlowColor(table.id)}` } : {}}
-        >
-          {/* Table Header */}
-          <button
-            onClick={() => setActiveTable(activeTable === table.id ? null : table.id)}
-            className={`w-full text-left p-5 transition-colors ${
-              activeTable === table.id ? 'bg-white/5' : 'hover:bg-white/[0.02]'
-            }`}
-          >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <span className="text-2xl">{table.icon}</span>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono font-bold text-white">{table.name}</span>
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full ${table.bgGlow} ${table.color} border ${table.borderColor}`}>
-                      {table.columns.length} kolom
-                    </span>
-                  </div>
-                  <p className="text-sm text-slate-500 mt-0.5">{table.subtitle}</p>
-                </div>
-              </div>
-              <svg
-                className={`w-5 h-5 text-slate-500 transition-transform ${activeTable === table.id ? 'rotate-180' : ''}`}
-                fill="none" stroke="currentColor" viewBox="0 0 24 24"
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-              </svg>
-            </div>
-          </button>
-
-          {/* Table Detail */}
-          {activeTable === table.id && (
-            <div className="px-5 pb-5">
-              <TableDetail table={table} />
-            </div>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/* ───────── Table Detail ───────── */
-function TableDetail({ table }: { table: TableSchema }) {
-  return (
-    <div>
-      <p className="text-sm text-slate-400 mb-4">{table.description}</p>
-
-      {/* SQL Preview */}
-      <div className="mb-4 p-4 rounded-lg bg-black/30 border border-white/5 overflow-x-auto">
-        <div className="flex items-center gap-2 mb-2">
-          <span className="w-2 h-2 rounded-full bg-red-500/60" />
-          <span className="w-2 h-2 rounded-full bg-yellow-500/60" />
-          <span className="w-2 h-2 rounded-full bg-green-500/60" />
-          <span className="text-[10px] text-slate-600 ml-2 font-mono">SQL</span>
-        </div>
-        <pre className="text-xs font-mono text-slate-300 leading-relaxed">
-          <span className="text-purple-400">CREATE TABLE</span>{' '}
-          <span className="text-amber-400">{table.name}</span>{' '}
-          <span className="text-slate-500">{'('}</span>{'\n'}
-          {table.columns.map((col, i) => (
-            <span key={col.name}>
-              {'  '}
-              <span className="text-cyan-400">{col.name}</span>{' '}
-              <span className="text-emerald-400">{col.type}</span>
-              {col.constraint && <span className="text-rose-400"> {col.constraint}</span>}
-              {i < table.columns.length - 1 ? <span className="text-slate-500">,</span> : ''}{'\n'}
-            </span>
-          ))}
-          <span className="text-slate-500">{')'}</span>
-          <span className="text-slate-500">;</span>
-        </pre>
-      </div>
-
-      {/* Columns Table */}
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-white/10">
-              <th className="text-left py-2 px-3 text-xs font-semibold text-slate-500 uppercase">Kolom</th>
-              <th className="text-left py-2 px-3 text-xs font-semibold text-slate-500 uppercase">Tipe Data</th>
-              <th className="text-left py-2 px-3 text-xs font-semibold text-slate-500 uppercase">Constraint</th>
-              <th className="text-left py-2 px-3 text-xs font-semibold text-slate-500 uppercase hidden sm:table-cell">Deskripsi</th>
-            </tr>
-          </thead>
-          <tbody>
-            {table.columns.map((col) => (
-              <tr key={col.name} className="border-b border-white/5 hover:bg-white/[0.02] transition-colors">
-                <td className="py-2.5 px-3">
-                  <div className="flex items-center gap-2">
-                    {col.constraint === 'PK' && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 font-mono font-bold">PK</span>
-                    )}
-                    {col.constraint?.startsWith('FK') && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 font-mono font-bold">FK</span>
-                    )}
-                    {col.constraint === 'UNIQUE' && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-mono font-bold">UQ</span>
-                    )}
-                    <span className="font-mono text-slate-300">{col.name}</span>
-                  </div>
-                </td>
-                <td className="py-2.5 px-3 font-mono text-xs text-emerald-400">{col.type}</td>
-                <td className="py-2.5 px-3 font-mono text-xs text-rose-400">{col.constraint || '—'}</td>
-                <td className="py-2.5 px-3 text-xs text-slate-500 hidden sm:table-cell">{col.description}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
+function getConstraintStyle(constraint: string): string {
+  if (constraint === 'PK') return 'bg-amber-500/20 text-amber-400 border border-amber-500/30';
+  if (constraint.startsWith('FK')) return 'bg-blue-500/20 text-blue-400 border border-blue-500/30';
+  if (constraint === 'UNIQUE' || constraint === 'NOT NULL') return 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
+  if (constraint.startsWith('DEFAULT')) return 'bg-slate-500/20 text-slate-400 border border-slate-500/30';
+  return 'bg-white/5 text-slate-400 border border-white/10';
 }
 
 function getGlowColor(id: string): string {
   const colors: Record<string, string> = {
-    cooperatives: 'rgba(59, 130, 246, 0.12)',
-    users: 'rgba(16, 185, 129, 0.12)',
-    memberships: 'rgba(168, 85, 247, 0.12)',
-    id_sequences: 'rgba(245, 158, 11, 0.12)',
-    savings: 'rgba(244, 63, 94, 0.12)',
+    'cooperatives': 'rgba(59, 130, 246, 0.1)',
+    'users': 'rgba(16, 185, 129, 0.1)',
+    'memberships': 'rgba(168, 85, 247, 0.1)',
+    'id_sequences': 'rgba(245, 158, 11, 0.1)',
+    'savings': 'rgba(244, 63, 94, 0.1)',
   };
   return colors[id] || 'rgba(255, 255, 255, 0.1)';
 }
