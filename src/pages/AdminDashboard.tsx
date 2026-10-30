@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { adminStats, members, loans, monthlyData, formatCurrency, formatDate } from '../data/mockData';
+import IntegrationDiagram from '../components/IntegrationDiagram';
 
 interface Props {
   onLogout: () => void;
 }
 
-type Tab = 'overview' | 'members' | 'savings' | 'loans' | 'agrid' | 'reports';
+type Tab = 'overview' | 'members' | 'savings' | 'loans' | 'agrid' | 'integration' | 'reports';
 
 export default function AdminDashboard({ onLogout }: Props) {
   const [activeTab, setActiveTab] = useState<Tab>('overview');
@@ -20,6 +21,7 @@ export default function AdminDashboard({ onLogout }: Props) {
     { id: 'savings', label: 'Simpanan', icon: '💰' },
     { id: 'loans', label: 'Pinjaman', icon: '🏦' },
     { id: 'agrid', label: 'AGRID', icon: '🛒' },
+    { id: 'integration', label: 'Integrasi API', icon: '🌐' },
     { id: 'reports', label: 'Laporan', icon: '📋' },
   ];
 
@@ -534,6 +536,11 @@ export default function AdminDashboard({ onLogout }: Props) {
               </div>
             </div>
           </div>
+        )}
+
+        {/* Integration Tab */}
+        {activeTab === 'integration' && (
+          <IntegrationDiagram />
         )}
 
         {/* Reports Tab */}
