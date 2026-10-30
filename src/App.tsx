@@ -2,6 +2,7 @@ import { useState } from 'react';
 import ArchitectureDiagram from './components/ArchitectureDiagram';
 import TechLayerCard from './components/TechLayerCard';
 import FlowDiagram from './components/FlowDiagram';
+import DatabaseSchema from './components/DatabaseSchema';
 import { layers } from './data/layers';
 
 export default function App() {
@@ -58,6 +59,11 @@ export default function App() {
           </div>
         </section>
 
+        {/* Database Schema */}
+        <section className="mt-16">
+          <DatabaseSchema />
+        </section>
+
         {/* Flow Diagram */}
         <section className="mt-16">
           <div className="flex items-center gap-3 mb-8">
@@ -73,17 +79,19 @@ export default function App() {
 
         {/* Stats */}
         <section className="mt-16">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
             {[
               { label: 'Layer', value: '5', icon: '📐' },
               { label: 'Tech Stack', value: '10+', icon: '🛠️' },
+              { label: 'Tabel DB', value: '5', icon: '🗄️' },
+              { label: 'Relasi FK', value: '4', icon: '🔗' },
               { label: 'ACID Compliant', value: '100%', icon: '🔒' },
               { label: 'Uptime Target', value: '99.9%', icon: '⚡' },
             ].map((stat) => (
-              <div key={stat.label} className="bg-white/5 border border-white/10 rounded-xl p-6 text-center hover:bg-white/10 transition-colors">
-                <div className="text-3xl mb-2">{stat.icon}</div>
-                <div className="text-2xl sm:text-3xl font-bold text-white">{stat.value}</div>
-                <div className="text-sm text-slate-400 mt-1">{stat.label}</div>
+              <div key={stat.label} className="bg-white/5 border border-white/10 rounded-xl p-5 text-center hover:bg-white/10 transition-colors">
+                <div className="text-2xl mb-2">{stat.icon}</div>
+                <div className="text-xl sm:text-2xl font-bold text-white">{stat.value}</div>
+                <div className="text-xs text-slate-400 mt-1">{stat.label}</div>
               </div>
             ))}
           </div>
