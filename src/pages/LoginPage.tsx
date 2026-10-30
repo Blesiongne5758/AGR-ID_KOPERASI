@@ -125,8 +125,8 @@ export default function LoginPage({ onLogin }: Props) {
           <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-white/10 backdrop-blur-sm border border-white/20 mb-4 shadow-2xl">
             <Building2 className="w-10 h-10 text-white" strokeWidth={1.5} />
           </div>
-          <h1 className="text-3xl sm:text-4xl font-bold text-white mb-2">
-            Koperasi Digital
+          <h1 className="text-2xl sm:text-3xl font-bold text-white mb-2">
+            AGR.BIZ.ID - KOPERASI DIGITAL
           </h1>
           <p className="text-emerald-200/80 text-sm sm:text-base">
             Sistem Informasi Koperasi Terintegrasi
@@ -331,7 +331,7 @@ export default function LoginPage({ onLogin }: Props) {
         {/* Footer */}
         <div className="text-center mt-6">
           <p className="text-xs text-emerald-200/40">
-            © 2026 Koperasi Digital • Terintegrasi dengan AGRID Marketplace
+            © 2026 AGR.BIZ.ID - KOPERASI DIGITAL • Terintegrasi dengan AGRID Marketplace
           </p>
         </div>
       </div>

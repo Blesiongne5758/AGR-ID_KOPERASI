@@ -38,7 +38,7 @@ export interface Transaction {
 }
 
 export const coopCodeMap: Record<string, string> = {
-  'AGR': 'Koperasi AGRID Sejahtera',
+  'AGR': 'AGR.BIZ.ID - KOPERASI DIGITAL',
   'KPM': 'Koperasi Maju Bersama',
   'SPR': 'Koperasi Sumber Rejeki',
   'BKR': 'Koperasi Berkah Rakyat',

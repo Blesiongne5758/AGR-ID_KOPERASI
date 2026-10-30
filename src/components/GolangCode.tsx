@@ -445,7 +445,7 @@ func main() {
         </h3>
         <div className="grid sm:grid-cols-3 gap-4">
           {[
-            { example: 'AGR-2026-000001', coop: 'Koperasi AGRID Sejahtera' },
+            { example: 'AGR-2026-000001', coop: 'AGR.BIZ.ID - KOPERASI DIGITAL' },
             { example: 'KPM-2026-000042', coop: 'Koperasi Maju Bersama' },
             { example: 'SPR-2026-000123', coop: 'Koperasi Sumber Rejeki' },
           ].map(item => (

@@ -26,7 +26,7 @@ export default function MemberDashboard({ onLogout }: Props) {
             </div>
             <div>
               <h1 className="text-sm font-bold text-white">{member.full_name}</h1>
-              <p className="text-[10px] text-emerald-400">{member.member_id} • Koperasi AGRID</p>
+              <p className="text-[10px] text-emerald-400">{member.member_id} • AGR.BIZ.ID</p>
             </div>
           </div>
           <button onClick={onLogout} className="p-2 rounded-lg bg-white/5 border border-white/10 text-slate-400 hover:text-white transition-colors">
