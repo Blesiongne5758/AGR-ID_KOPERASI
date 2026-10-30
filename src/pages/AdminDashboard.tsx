@@ -2,6 +2,7 @@ import { useState } from 'react';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
 import StatCard from '../components/StatCard';
+import WebhookEndpoint from '../components/WebhookEndpoint';
 import { Users, Wallet, CircleDollarSign, AlertTriangle } from 'lucide-react';
 
 interface Props {
@@ -78,15 +79,18 @@ export default function AdminDashboard({ onLogout }: Props) {
 
         {/* Page Content */}
         <main className="p-4 sm:p-6 lg:p-8">
-          {/* Page Title */}
-          <div className="mb-8">
-            <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 mb-2">
-              Dashboard
-            </h1>
-            <p className="text-slate-600">
-              Selamat datang kembali, {adminData.name}! Berikut ringkasan koperasi Anda.
-            </p>
-          </div>
+          {/* Dashboard Content */}
+          {activeMenu === 'dashboard' && (
+            <>
+              {/* Page Title */}
+              <div className="mb-8">
+                <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 mb-2">
+                  Dashboard
+                </h1>
+                <p className="text-slate-600">
+                  Selamat datang kembali, {adminData.name}! Berikut ringkasan koperasi Anda.
+                </p>
+              </div>
 
           {/* Stats Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-8">
@@ -154,6 +158,28 @@ export default function AdminDashboard({ onLogout }: Props) {
               </div>
             </div>
           </div>
+            </>
+          )}
+
+          {/* AGRID Integration - Webhook Endpoint */}
+          {activeMenu === 'agrid' && (
+            <div className="bg-slate-900 rounded-xl border border-slate-800 p-6">
+              <WebhookEndpoint />
+            </div>
+          )}
+
+          {/* Other Menus - Placeholder */}
+          {activeMenu !== 'dashboard' && activeMenu !== 'agrid' && (
+            <div className="bg-white rounded-xl border border-slate-200 p-12 text-center">
+              <div className="text-4xl mb-4">🚧</div>
+              <h2 className="text-xl font-bold text-slate-900 mb-2">
+                {activeMenu.charAt(0).toUpperCase() + activeMenu.slice(1)}
+              </h2>
+              <p className="text-slate-600">
+                Halaman ini sedang dalam pengembangan.
+              </p>
+            </div>
+          )}
         </main>
       </div>
     </div>
