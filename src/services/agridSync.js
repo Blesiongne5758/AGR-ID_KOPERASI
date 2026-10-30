@@ -12,8 +12,12 @@ const pool = new Pool({
 });
 
 // Konfigurasi AGR-ID
-const AGRID_BASE_URL = process.env.AGRID_BASE_URL || 'https://agr.id';
+// Repository: https://github.com/blesiongne5758/agr-id
+// URL base: https://agr.biz.id (InfinityFree hosting)
+// Database: Supabase
+const AGRID_BASE_URL = process.env.AGRID_BASE_URL || 'https://agr.biz.id';
 const AGRID_API_TOKEN = process.env.AGRID_API_TOKEN;
+const AGRID_REPO_URL = process.env.AGRID_REPO_URL || 'https://github.com/blesiongne5758/agr-id';
 
 /**
  * Fetch semua koperasi aktif beserta anggotanya
