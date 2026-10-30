@@ -5,6 +5,7 @@ import StatCard from '../components/StatCard';
 import WebhookEndpoint from '../components/WebhookEndpoint';
 import AnnuityCalculator from '../components/AnnuityCalculator';
 import AgridIntegrationSchema from '../components/AgridIntegrationSchema';
+import AgridWebhookProduction from '../components/AgridWebhookProduction';
 import { Users, Wallet, CircleDollarSign, AlertTriangle } from 'lucide-react';
 
 interface Props {
@@ -167,7 +168,7 @@ export default function AdminDashboard({ onLogout }: Props) {
           {activeMenu === 'agrid' && (
             <div className="space-y-6">
               <div className="bg-slate-900 rounded-xl border border-slate-800 p-6">
-                <WebhookEndpoint />
+                <AgridWebhookProduction />
               </div>
               <div className="bg-slate-900 rounded-xl border border-slate-800 p-6">
                 <AgridIntegrationSchema />
