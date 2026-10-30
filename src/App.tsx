@@ -1,340 +1,139 @@
-import { useState, FormEvent } from 'react';
-import {
-  Eye,
-  EyeOff,
-  LogIn,
-  UserCircle,
-  Lock,
-  AlertCircle,
-  CheckCircle2,
-  Building2,
-  Loader2,
-} from 'lucide-react';
+import { useState } from 'react';
+import Sidebar from './components/Sidebar';
+import Header from './components/Header';
+import StatCard from './components/StatCard';
+import { Users, Wallet, CircleDollarSign, AlertTriangle } from 'lucide-react';
 
-interface Props {
-  onLogin?: (memberId: string) => void;
-}
+export default function App() {
+  const [activeMenu, setActiveMenu] = useState('dashboard');
 
-export default function App({ onLogin }: Props) {
-  const [memberId, setMemberId] = useState('');
-  const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [errors, setErrors] = useState<{ memberId?: string; password?: string }>({});
-  const [touched, setTouched] = useState<{ memberId?: boolean; password?: boolean }>({});
+  // Mock data - dalam real app, ini akan datang dari context/API
+  const cooperativeName = 'Koperasi AGRID Sejahtera';
 
-  // Validation functions
-  const validateMemberId = (value: string): string | undefined => {
-    if (!value.trim()) {
-      return 'Kode ID Anggota wajib diisi';
-    }
-    if (value.length < 3) {
-      return 'Kode ID minimal 3 karakter';
-    }
-    if (!/^[A-Z0-9-]+$/i.test(value)) {
-      return 'Kode ID hanya boleh berisi huruf, angka, dan dash';
-    }
-    return undefined;
-  };
-
-  const validatePassword = (value: string): string | undefined => {
-    if (!value) {
-      return 'Password wajib diisi';
-    }
-    if (value.length < 6) {
-      return 'Password minimal 6 karakter';
-    }
-    return undefined;
-  };
-
-  // Handle input changes with validation
-  const handleMemberIdChange = (value: string) => {
-    setMemberId(value.toUpperCase());
-    if (touched.memberId) {
-      setErrors(prev => ({ ...prev, memberId: validateMemberId(value) }));
-    }
-  };
-
-  const handlePasswordChange = (value: string) => {
-    setPassword(value);
-    if (touched.password) {
-      setErrors(prev => ({ ...prev, password: validatePassword(value) }));
-    }
-  };
-
-  // Handle blur events
-  const handleMemberIdBlur = () => {
-    setTouched(prev => ({ ...prev, memberId: true }));
-    setErrors(prev => ({ ...prev, memberId: validateMemberId(memberId) }));
-  };
-
-  const handlePasswordBlur = () => {
-    setTouched(prev => ({ ...prev, password: true }));
-    setErrors(prev => ({ ...prev, password: validatePassword(password) }));
-  };
-
-  // Form submission
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-
-    // Validate all fields
-    const memberIdError = validateMemberId(memberId);
-    const passwordError = validatePassword(password);
-
-    setTouched({ memberId: true, password: true });
-    setErrors({ memberId: memberIdError, password: passwordError });
-
-    // If there are errors, stop
-    if (memberIdError || passwordError) {
-      return;
-    }
-
-    // Simulate API call
-    setIsLoading(true);
-
-    try {
-      // Simulate network delay
-      await new Promise(resolve => setTimeout(resolve, 1500));
-
-      // Demo logic
-      if (onLogin) {
-        onLogin(memberId);
-      } else {
-        console.log('Login successful:', { memberId });
-      }
-    } catch (error) {
-      console.error('Login failed:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  const stats = [
+    {
+      title: 'Total Anggota',
+      value: 1247,
+      icon: <Users className="w-6 h-6 text-emerald-400" />,
+      trend: { value: 12.5, isPositive: true },
+      subtitle: '+142 bulan ini',
+      color: 'emerald' as const,
+    },
+    {
+      title: 'Total Simpanan',
+      value: 'Rp 2.4 M',
+      icon: <Wallet className="w-6 h-6 text-blue-400" />,
+      trend: { value: 8.3, isPositive: true },
+      subtitle: 'Pokok + Wajib + Sukarela',
+      color: 'blue' as const,
+    },
+    {
+      title: 'Pinjaman Aktif',
+      value: 156,
+      icon: <CircleDollarSign className="w-6 h-6 text-amber-400" />,
+      trend: { value: 5.2, isPositive: true },
+      subtitle: 'Total: Rp 890 Juta',
+      color: 'amber' as const,
+    },
+    {
+      title: 'NPL Ratio',
+      value: '2.3%',
+      icon: <AlertTriangle className="w-6 h-6 text-rose-400" />,
+      trend: { value: -0.5, isPositive: false },
+      subtitle: 'Non-Performing Loan',
+      color: 'rose' as const,
+    },
+  ];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-emerald-900 via-green-900 to-teal-900 flex items-center justify-center p-4 sm:p-6 lg:p-8">
-      {/* Background Pattern */}
-      <div className="absolute inset-0 opacity-10">
-        <div
-          className="absolute inset-0"
-          style={{
-            backgroundImage: `radial-gradient(circle at 25% 25%, rgba(255,255,255,0.1) 0%, transparent 50%),
-                             radial-gradient(circle at 75% 75%, rgba(255,255,255,0.05) 0%, transparent 50%)`,
-          }}
-        />
-      </div>
+    <div className="min-h-screen bg-slate-50">
+      {/* Sidebar */}
+      <Sidebar activeMenu={activeMenu} onMenuChange={setActiveMenu} />
 
-      <div className="relative w-full max-w-md">
-        {/* Logo & Header */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-white/10 backdrop-blur-sm border border-white/20 mb-4 shadow-2xl">
-            <Building2 className="w-10 h-10 text-white" strokeWidth={1.5} />
-          </div>
-          <h1 className="text-3xl sm:text-4xl font-bold text-white mb-2">
-            AGR.BIZ.ID
-          </h1>
-          <p className="text-emerald-200/80 text-sm sm:text-base">
-            Koperasi Digital - Sistem Informasi Terintegrasi
-          </p>
-        </div>
+      {/* Main Content */}
+      <div className="lg:pl-64 transition-all duration-300">
+        {/* Header */}
+        <Header cooperativeName={cooperativeName} />
 
-        {/* Login Card */}
-        <div className="bg-white/10 backdrop-blur-xl rounded-2xl border border-white/20 p-6 sm:p-8 shadow-2xl">
-          <div className="mb-6">
-            <h2 className="text-xl sm:text-2xl font-bold text-white mb-1 flex items-center gap-2">
-              <LogIn className="w-5 h-5 text-emerald-400" />
-              Login Anggota
-            </h2>
-            <p className="text-sm text-emerald-200/70">Masuk ke akun koperasi Anda</p>
+        {/* Page Content */}
+        <main className="p-4 sm:p-6 lg:p-8">
+          {/* Page Title */}
+          <div className="mb-8">
+            <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 mb-2">
+              Dashboard
+            </h1>
+            <p className="text-slate-600">
+              Selamat datang kembali! Berikut ringkasan koperasi Anda.
+            </p>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-5">
-            {/* Member ID Field */}
-            <div>
-              <label htmlFor="memberId" className="block text-sm font-medium text-emerald-200 mb-2">
-                Kode ID Anggota
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <UserCircle
-                    className={`h-5 w-5 ${
-                      errors.memberId && touched.memberId ? 'text-red-400' : 'text-emerald-300/50'
-                    }`}
-                  />
-                </div>
-                <input
-                  id="memberId"
-                  type="text"
-                  value={memberId}
-                  onChange={e => handleMemberIdChange(e.target.value)}
-                  onBlur={handleMemberIdBlur}
-                  placeholder="AGR-2024-000001"
-                  disabled={isLoading}
-                  className={`
-                    w-full pl-10 pr-10 py-3 bg-white/5 border rounded-xl text-white placeholder-white/30
-                    focus:outline-none focus:ring-2 transition-all
-                    disabled:opacity-50 disabled:cursor-not-allowed
-                    ${
-                      errors.memberId && touched.memberId
-                        ? 'border-red-500/50 focus:border-red-400 focus:ring-red-400/20'
-                        : 'border-white/20 focus:border-emerald-400 focus:ring-emerald-400/20'
-                    }
-                  `}
-                  autoComplete="username"
-                />
-                {memberId && !errors.memberId && touched.memberId && (
-                  <div className="absolute inset-y-0 right-0 pr-3 flex items-center">
-                    <CheckCircle2 className="h-5 w-5 text-emerald-400" />
+          {/* Stats Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-8">
+            {stats.map((stat, index) => (
+              <StatCard
+                key={index}
+                title={stat.title}
+                value={stat.value}
+                icon={stat.icon}
+                trend={stat.trend}
+                subtitle={stat.subtitle}
+                color={stat.color}
+              />
+            ))}
+          </div>
+
+          {/* Content Area - Placeholder untuk konten lainnya */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Recent Activities */}
+            <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 p-6">
+              <h2 className="text-lg font-semibold text-slate-900 mb-4">
+                Aktivitas Terbaru
+              </h2>
+              <div className="space-y-4">
+                {[
+                  { action: 'Anggota baru bergabung', name: 'Siti Nurhaliza', time: '2 jam lalu' },
+                  { action: 'Setoran simpanan', name: 'Budi Santoso', time: '3 jam lalu' },
+                  { action: 'Pengajuan pinjaman', name: 'Dewi Lestari', time: '5 jam lalu' },
+                  { action: 'Pembayaran angsuran', name: 'Eko Prasetyo', time: '1 hari lalu' },
+                ].map((activity, i) => (
+                  <div key={i} className="flex items-start gap-3 p-3 rounded-lg hover:bg-slate-50 transition-colors">
+                    <div className="w-10 h-10 rounded-full bg-emerald-500/10 flex items-center justify-center flex-shrink-0">
+                      <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-slate-900">{activity.action}</p>
+                      <p className="text-xs text-slate-600">{activity.name}</p>
+                    </div>
+                    <span className="text-xs text-slate-400 whitespace-nowrap">{activity.time}</span>
                   </div>
-                )}
+                ))}
               </div>
-              {errors.memberId && touched.memberId && (
-                <div className="mt-2 flex items-center gap-1.5 text-xs text-red-400">
-                  <AlertCircle className="w-3.5 h-3.5" />
-                  <span>{errors.memberId}</span>
-                </div>
-              )}
             </div>
 
-            {/* Password Field */}
-            <div>
-              <label htmlFor="password" className="block text-sm font-medium text-emerald-200 mb-2">
-                Password
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Lock
-                    className={`h-5 w-5 ${
-                      errors.password && touched.password ? 'text-red-400' : 'text-emerald-300/50'
-                    }`}
-                  />
-                </div>
-                <input
-                  id="password"
-                  type={showPassword ? 'text' : 'password'}
-                  value={password}
-                  onChange={e => handlePasswordChange(e.target.value)}
-                  onBlur={handlePasswordBlur}
-                  placeholder="Masukkan password Anda"
-                  disabled={isLoading}
-                  className={`
-                    w-full pl-10 pr-12 py-3 bg-white/5 border rounded-xl text-white placeholder-white/30
-                    focus:outline-none focus:ring-2 transition-all
-                    disabled:opacity-50 disabled:cursor-not-allowed
-                    ${
-                      errors.password && touched.password
-                        ? 'border-red-500/50 focus:border-red-400 focus:ring-red-400/20'
-                        : 'border-white/20 focus:border-emerald-400 focus:ring-emerald-400/20'
-                    }
-                  `}
-                  autoComplete="current-password"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  disabled={isLoading}
-                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-emerald-300/50 hover:text-emerald-300 transition-colors disabled:opacity-50"
-                  aria-label={showPassword ? 'Sembunyikan password' : 'Tampilkan password'}
-                >
-                  {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-                </button>
+            {/* Quick Actions */}
+            <div className="bg-white rounded-xl border border-slate-200 p-6">
+              <h2 className="text-lg font-semibold text-slate-900 mb-4">
+                Aksi Cepat
+              </h2>
+              <div className="space-y-3">
+                {[
+                  { label: 'Tambah Anggota', icon: '👤' },
+                  { label: 'Input Simpanan', icon: '💰' },
+                  { label: 'Proses Pinjaman', icon: '🏦' },
+                  { label: 'Cetak Laporan', icon: '📊' },
+                ].map((action, i) => (
+                  <button
+                    key={i}
+                    className="w-full flex items-center gap-3 p-3 rounded-lg border border-slate-200 hover:border-emerald-500/50 hover:bg-emerald-50/50 transition-all text-left"
+                  >
+                    <span className="text-2xl">{action.icon}</span>
+                    <span className="text-sm font-medium text-slate-700">{action.label}</span>
+                  </button>
+                ))}
               </div>
-              {errors.password && touched.password && (
-                <div className="mt-2 flex items-center gap-1.5 text-xs text-red-400">
-                  <AlertCircle className="w-3.5 h-3.5" />
-                  <span>{errors.password}</span>
-                </div>
-              )}
-            </div>
-
-            {/* Submit Button */}
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="
-                w-full py-3.5 bg-gradient-to-r from-emerald-500 to-teal-500
-                text-white font-semibold rounded-xl shadow-lg shadow-emerald-500/25
-                hover:shadow-emerald-500/40 hover:scale-[1.02]
-                active:scale-[0.98] transition-all
-                disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100
-                flex items-center justify-center gap-2
-              "
-            >
-              {isLoading ? (
-                <>
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>Memverifikasi...</span>
-                </>
-              ) : (
-                <>
-                  <LogIn className="w-5 h-5" />
-                  <span>Masuk</span>
-                </>
-              )}
-            </button>
-          </form>
-
-          {/* Quick Login Demo */}
-          <div className="mt-5 p-3 rounded-lg bg-blue-500/10 border border-blue-500/20">
-            <p className="text-xs text-blue-300 font-medium mb-2 flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
-              Demo Login (Testing):
-            </p>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setMemberId('AGR-2024-000001');
-                  setPassword('admin123');
-                  setErrors({});
-                  setTouched({});
-                }}
-                disabled={isLoading}
-                className="flex-1 py-2 text-xs bg-blue-500/20 text-blue-300 rounded-md hover:bg-blue-500/30 transition-colors disabled:opacity-50"
-              >
-                Admin
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setMemberId('AGR-2024-000002');
-                  setPassword('member123');
-                  setErrors({});
-                  setTouched({});
-                }}
-                disabled={isLoading}
-                className="flex-1 py-2 text-xs bg-blue-500/20 text-blue-300 rounded-md hover:bg-blue-500/30 transition-colors disabled:opacity-50"
-              >
-                Anggota
-              </button>
             </div>
           </div>
-
-          {/* Divider */}
-          <div className="flex items-center gap-3 my-6">
-            <div className="flex-1 h-px bg-white/10" />
-            <span className="text-xs text-white/40">atau</span>
-            <div className="flex-1 h-px bg-white/10" />
-          </div>
-
-          {/* Register Link */}
-          <div className="text-center">
-            <p className="text-sm text-emerald-200/70">
-              Belum memiliki ID Anggota?{' '}
-              <a
-                href="/register-coop"
-                className="text-white font-semibold hover:text-emerald-300 transition-colors underline underline-offset-2"
-              >
-                Daftarkan Koperasi Anda
-              </a>
-            </p>
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className="text-center mt-6">
-          <p className="text-xs text-emerald-200/40">
-            © 2026 AGR.BIZ.ID - KOPERASI DIGITAL • Terintegrasi dengan AGRID Marketplace
-          </p>
-        </div>
+        </main>
       </div>
     </div>
   );
