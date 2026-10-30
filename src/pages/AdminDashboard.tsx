@@ -2,12 +2,13 @@ import { useState } from 'react';
 import { adminStats, members, loans, monthlyData, formatCurrency, formatDate } from '../data/mockData';
 import IntegrationDiagram from '../components/IntegrationDiagram';
 import MigrationScript from '../components/MigrationScript';
+import GolangCode from '../components/GolangCode';
 
 interface Props {
   onLogout: () => void;
 }
 
-type Tab = 'overview' | 'members' | 'savings' | 'loans' | 'agrid' | 'integration' | 'database' | 'reports';
+type Tab = 'overview' | 'members' | 'savings' | 'loans' | 'agrid' | 'integration' | 'database' | 'golang' | 'reports';
 
 export default function AdminDashboard({ onLogout }: Props) {
   const [activeTab, setActiveTab] = useState<Tab>('overview');
@@ -24,6 +25,7 @@ export default function AdminDashboard({ onLogout }: Props) {
     { id: 'agrid', label: 'AGRID', icon: '🛒' },
     { id: 'integration', label: 'Integrasi API', icon: '🌐' },
     { id: 'database', label: 'Database', icon: '🗄️' },
+    { id: 'golang', label: 'Golang', icon: '🐹' },
     { id: 'reports', label: 'Laporan', icon: '📋' },
   ];
 
@@ -548,6 +550,11 @@ export default function AdminDashboard({ onLogout }: Props) {
         {/* Database Tab */}
         {activeTab === 'database' && (
           <MigrationScript />
+        )}
+
+        {/* Golang Tab */}
+        {activeTab === 'golang' && (
+          <GolangCode />
         )}
 
         {/* Reports Tab */}
