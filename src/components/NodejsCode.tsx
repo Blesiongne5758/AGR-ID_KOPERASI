@@ -401,7 +401,7 @@ export default function NodejsCode() {
   "user_id": "123e4567-e89b-12d3-a456-426614174000",
   "member_id": "AGR001",
   "cooperative_id": "987fcdeb-51a2-43d7-9012-3456789abcde",
-  "cooperative_name": "Koperasi AGRID Sejahtera",
+  "cooperative_name": "AGR.BIZ.ID - KOPERASI DIGITAL",
   "coop_code": "AGR",
   "role": "MEMBER",
   "full_name": "Ahmad Suryadi",

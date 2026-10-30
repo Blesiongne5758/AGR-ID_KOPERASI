@@ -400,7 +400,7 @@ async handleAgridWebhook(
                 <label className="text-xs text-slate-400 block mb-1">Pilih Koperasi</label>
                 <select className="w-full px-4 py-2.5 bg-white/5 border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:border-purple-500">
                   <option value="">-- Pilih Koperasi --</option>
-                  <option value="agr">Koperasi AGRID Sejahtera (AGR)</option>
+                  <option value="agr">AGR.BIZ.ID - KOPERASI DIGITAL (AGR)</option>
                   <option value="kpm">Koperasi Maju Bersama (KPM)</option>
                   <option value="spr">Koperasi Sumber Rejeki (SPR)</option>
                 </select>

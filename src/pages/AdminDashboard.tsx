@@ -17,7 +17,7 @@ export default function AdminDashboard({ onLogout }: Props) {
 
   // Mock data - dalam real app, ini akan datang dari API/context
   const coopData = {
-    name: 'Koperasi AGRID Sejahtera',
+    name: 'AGR.BIZ.ID - KOPERASI DIGITAL',
     code: 'AGR',
   };
 
