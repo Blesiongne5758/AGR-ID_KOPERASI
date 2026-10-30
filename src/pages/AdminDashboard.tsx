@@ -6,6 +6,7 @@ import WebhookEndpoint from '../components/WebhookEndpoint';
 import AnnuityCalculator from '../components/AnnuityCalculator';
 import AgridIntegrationSchema from '../components/AgridIntegrationSchema';
 import AgridWebhookProduction from '../components/AgridWebhookProduction';
+import AgridSyncJob from '../components/AgridSyncJob';
 import { Users, Wallet, CircleDollarSign, AlertTriangle } from 'lucide-react';
 
 interface Props {
@@ -176,6 +177,13 @@ export default function AdminDashboard({ onLogout }: Props) {
             </div>
           )}
 
+          {/* Sync AGR-ID */}
+          {activeMenu === 'sync' && (
+            <div className="bg-slate-900 rounded-xl border border-slate-800 p-6">
+              <AgridSyncJob />
+            </div>
+          )}
+
           {/* Loans - Annuity Calculator */}
           {activeMenu === 'loans' && (
             <div className="bg-slate-900 rounded-xl border border-slate-800 p-6">
@@ -184,7 +192,7 @@ export default function AdminDashboard({ onLogout }: Props) {
           )}
 
           {/* Other Menus - Placeholder */}
-          {activeMenu !== 'dashboard' && activeMenu !== 'agrid' && activeMenu !== 'loans' && (
+          {activeMenu !== 'dashboard' && activeMenu !== 'agrid' && activeMenu !== 'sync' && activeMenu !== 'loans' && (
             <div className="bg-white rounded-xl border border-slate-200 p-12 text-center">
               <div className="text-4xl mb-4">🚧</div>
               <h2 className="text-xl font-bold text-slate-900 mb-2">
