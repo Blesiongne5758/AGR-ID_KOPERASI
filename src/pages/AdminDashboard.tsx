@@ -3,6 +3,7 @@ import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
 import StatCard from '../components/StatCard';
 import WebhookEndpoint from '../components/WebhookEndpoint';
+import AnnuityCalculator from '../components/AnnuityCalculator';
 import { Users, Wallet, CircleDollarSign, AlertTriangle } from 'lucide-react';
 
 interface Props {
@@ -168,8 +169,15 @@ export default function AdminDashboard({ onLogout }: Props) {
             </div>
           )}
 
+          {/* Loans - Annuity Calculator */}
+          {activeMenu === 'loans' && (
+            <div className="bg-slate-900 rounded-xl border border-slate-800 p-6">
+              <AnnuityCalculator />
+            </div>
+          )}
+
           {/* Other Menus - Placeholder */}
-          {activeMenu !== 'dashboard' && activeMenu !== 'agrid' && (
+          {activeMenu !== 'dashboard' && activeMenu !== 'agrid' && activeMenu !== 'loans' && (
             <div className="bg-white rounded-xl border border-slate-200 p-12 text-center">
               <div className="text-4xl mb-4">🚧</div>
               <h2 className="text-xl font-bold text-slate-900 mb-2">
